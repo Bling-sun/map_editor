@@ -22,6 +22,13 @@ npm run dev
 L 型墙的臂厚会按米制比例实时反映在画布预览中，并限制在 `0.05 m` 到该
 L 型墙较短边长度之间。
 
+形状库包括矩形、墙体、圆柱、L/E/T/H/S/F 组合墙，以及棱台、拱桥、树状三维
+障碍物。组合墙由共享壁厚的矩形墙段构成；棱台可设置顶面比例，拱桥可设置净空，
+树状障碍物可分别设置树干和树冠半径。
+
+画布工具栏可切换“2D 编辑”和“3D 预览”。3D 视图显示地面网格、外墙、障碍物、
+tracker 和 target；左右拖动可旋转视角，底部滑杆可缩放。
+
 ## 用于仿真
 
 编辑器提供两个互补文件：
@@ -40,5 +47,5 @@ cd ~/Documents/neural_tracker
 ```
 
 JSON 会被栅格化为和现有 tracker 兼容的 `nav_msgs/OccupancyGrid`；XML 由
-`run_tracking_mujoco.py` 通过 `NEURAL_TRACKER_SCENE_XML` 加载。矩形、旋转墙体、
-圆柱和 L 型障碍在两侧使用相同的米制几何定义。
+`run_tracking_mujoco.py` 通过 `NEURAL_TRACKER_SCENE_XML` 加载。所有基础、组合及
+不规则三维障碍在画布、ROS 栅格化与 MuJoCo 导出中共享同一组米制参数。

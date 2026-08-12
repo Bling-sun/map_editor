@@ -1,22 +1,8 @@
 "use client";
 
 import { ChangeEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-type Shape = "box" | "wall" | "cylinder" | "l_shape";
-
-type Obstacle = {
-  id: string;
-  name: string;
-  shape: Shape;
-  x: number;
-  y: number;
-  angle: number;
-  width: number;
-  depth: number;
-  height: number;
-  thickness: number;
-  radius: number;
-};
+import ThreePreview from "./ThreePreview";
+import { Obstacle, Shape, clampedThickness, isCompositeShape, localRects } from "./map-types";
 
 type MapFile = {
   format: "neural-tracker-map";
@@ -34,20 +20,36 @@ const SHAPES: { id: Shape; title: string; hint: string; glyph: string }[] = [
   { id: "wall", title: "墙体", hint: "长墙 / 隔断", glyph: "▬" },
   { id: "cylinder", title: "圆柱", hint: "树干 / 柱体", glyph: "●" },
   { id: "l_shape", title: "L 型", hint: "转角 / 围挡", glyph: "┗" },
+  { id: "e_shape", title: "E 型", hint: "三通道墙", glyph: "E" },
+  { id: "t_shape", title: "T 型", hint: "丁字隔断", glyph: "T" },
+  { id: "h_shape", title: "H 型", hint: "双墙连接", glyph: "H" },
+  { id: "s_shape", title: "S 型", hint: "回转通道", glyph: "S" },
+  { id: "f_shape", title: "F 型", hint: "双岔隔断", glyph: "F" },
+  { id: "frustum", title: "棱台", hint: "收口台体", glyph: "◆" },
+  { id: "arch", title: "拱桥", hint: "可通行门洞", glyph: "∩" },
+  { id: "tree", title: "树状", hint: "树干与树冠", glyph: "♣" },
 ];
 
+const preset = (values: Partial<Omit<Obstacle, "id" | "name" | "shape" | "x" | "y">>) => ({
+  width: 3, depth: 3, height: 1.5, thickness: 0.3, radius: 0.35,
+  topScale: 0.55, clearance: 1.4, crownRadius: 1.1, angle: 0, ...values,
+});
+
 const PRESETS: Record<Shape, Omit<Obstacle, "id" | "name" | "shape" | "x" | "y">> = {
-  box: { width: 1.2, depth: 1.2, height: 1.5, thickness: 0.3, radius: 0.6, angle: 0 },
-  wall: { width: 4, depth: 0.3, height: 1.5, thickness: 0.3, radius: 0.6, angle: 0 },
-  cylinder: { width: 1.2, depth: 1.2, height: 1.5, thickness: 0.3, radius: 0.6, angle: 0 },
-  l_shape: { width: 3, depth: 3, height: 1.5, thickness: 0.3, radius: 0.6, angle: 0 },
+  box: preset({ width: 1.2, depth: 1.2 }), wall: preset({ width: 4, depth: 0.3 }),
+  cylinder: preset({ width: 1.2, depth: 1.2, radius: 0.6 }), l_shape: preset({}),
+  e_shape: preset({ width: 4, depth: 4 }), t_shape: preset({ width: 4, depth: 3.5 }),
+  h_shape: preset({ width: 4, depth: 4 }), s_shape: preset({ width: 4, depth: 4 }),
+  f_shape: preset({ width: 4, depth: 4 }), frustum: preset({ width: 2.4, depth: 2.4, height: 1.8 }),
+  arch: preset({ width: 3.5, depth: 0.8, height: 2.2, thickness: 0.35, clearance: 1.55 }),
+  tree: preset({ width: 2.4, depth: 2.4, height: 3.2, radius: 0.28, crownRadius: 1.2 }),
 };
 
 const STARTER_OBSTACLES: Obstacle[] = [
-  { id: "wall-a", name: "入口墙", shape: "wall", x: -4.6, y: 3.1, width: 4.2, depth: 0.35, height: 1.5, thickness: 0.35, radius: 0.6, angle: 0 },
-  { id: "corner-a", name: "转角围挡", shape: "l_shape", x: 4.8, y: 2.5, width: 3.4, depth: 3.4, height: 1.5, thickness: 0.35, radius: 0.6, angle: 90 },
-  { id: "tree-a", name: "圆柱 01", shape: "cylinder", x: -2.2, y: -3.4, width: 1.2, depth: 1.2, height: 1.8, thickness: 0.3, radius: 0.65, angle: 0 },
-  { id: "box-a", name: "箱体 01", shape: "box", x: 3.6, y: -3.8, width: 1.8, depth: 1.25, height: 1.2, thickness: 0.3, radius: 0.6, angle: -18 },
+  { id: "wall-a", name: "入口墙", shape: "wall", x: -4.6, y: 3.1, ...preset({ width: 4.2, depth: 0.35, thickness: 0.35 }) },
+  { id: "corner-a", name: "转角围挡", shape: "l_shape", x: 4.8, y: 2.5, ...preset({ width: 3.4, depth: 3.4, thickness: 0.35, angle: 90 }) },
+  { id: "tree-a", name: "树状 01", shape: "tree", x: -2.2, y: -3.4, ...preset({ width: 2.2, depth: 2.2, height: 3, radius: 0.28, crownRadius: 1.1 }) },
+  { id: "box-a", name: "箱体 01", shape: "box", x: 3.6, y: -3.8, ...preset({ width: 1.8, depth: 1.25, height: 1.2, angle: -18 }) },
 ];
 
 const TRACKER_START = { x: -9.5, y: 0, yaw: 0 };
@@ -116,6 +118,15 @@ function boundaryXml(file: MapFile) {
 }
 
 function toMujoco(file: MapFile) {
+  const meshAssets = file.obstacles.map((obstacle, index) => {
+    if (obstacle.shape !== "frustum") return "";
+    const w = obstacle.width / 2, d = obstacle.depth / 2, h = obstacle.height / 2;
+    const tw = w * obstacle.topScale, td = d * obstacle.topScale;
+    const vertices = [[-w,-d,-h],[w,-d,-h],[w,d,-h],[-w,d,-h],[-tw,-td,h],[tw,-td,h],[tw,td,h],[-tw,td,h]]
+      .flat().map(xmlNumber).join(" ");
+    const faces = "0 2 1 0 3 2 4 5 6 4 6 7 0 1 5 0 5 4 1 2 6 1 6 5 2 3 7 2 7 6 3 0 4 3 4 7";
+    return `    <mesh name="frustum_${String(index).padStart(3, "0")}" vertex="${vertices}" face="${faces}"/>`;
+  }).filter(Boolean).join("\n");
   const geoms = file.obstacles.map((obstacle, index) => {
     const body = `obstacle_${String(index).padStart(3, "0")}`;
     const z = obstacle.height / 2;
@@ -124,20 +135,49 @@ function toMujoco(file: MapFile) {
     if (obstacle.shape === "cylinder") {
       return `${header}\n      <geom name="${body}_geom" type="cylinder" size="${xmlNumber(obstacle.radius)} ${xmlNumber(z)}" rgba="0.27 0.34 0.32 1"/>\n    </body>`;
     }
-    if (obstacle.shape === "l_shape") {
-      const thickness = Math.max(0.05, Math.min(obstacle.thickness, obstacle.width, obstacle.depth));
-      const horizontalY = -(obstacle.depth - thickness) / 2;
-      const verticalX = -(obstacle.width - thickness) / 2;
-      return `${header}\n      <geom name="${body}_horizontal" type="box" pos="0 ${xmlNumber(horizontalY)} 0" size="${xmlNumber(obstacle.width / 2)} ${xmlNumber(thickness / 2)} ${xmlNumber(z)}" rgba="0.22 0.28 0.31 1"/>\n      <geom name="${body}_vertical" type="box" pos="${xmlNumber(verticalX)} 0 0" size="${xmlNumber(thickness / 2)} ${xmlNumber(obstacle.depth / 2)} ${xmlNumber(z)}" rgba="0.22 0.28 0.31 1"/>\n    </body>`;
+    if (isCompositeShape(obstacle.shape)) {
+      const parts = localRects(obstacle).map((rect, part) => `      <geom name="${body}_part_${part}" type="box" pos="${xmlNumber(rect.x)} ${xmlNumber(rect.y)} 0" size="${xmlNumber(rect.width / 2)} ${xmlNumber(rect.depth / 2)} ${xmlNumber(z)}" rgba="0.22 0.28 0.31 1"/>`).join("\n");
+      return `${header}\n${parts}\n    </body>`;
+    }
+    if (obstacle.shape === "frustum") {
+      return `${header}\n      <geom name="${body}_geom" type="mesh" mesh="frustum_${String(index).padStart(3, "0")}" rgba="0.38 0.44 0.42 1"/>\n    </body>`;
+    }
+    if (obstacle.shape === "tree") {
+      const trunkHeight = Math.max(0.2, obstacle.height * 0.58);
+      const crownZ = trunkHeight + (obstacle.height - trunkHeight) / 2;
+      return `    <body name="${body}" pos="${xmlNumber(obstacle.x)} ${xmlNumber(obstacle.y)} 0" euler="0 0 ${xmlNumber(angle)}">\n      <geom name="${body}_trunk" type="cylinder" pos="0 0 ${xmlNumber(trunkHeight / 2)}" size="${xmlNumber(obstacle.radius)} ${xmlNumber(trunkHeight / 2)}" rgba="0.38 0.25 0.15 1"/>\n      <geom name="${body}_crown" type="ellipsoid" pos="0 0 ${xmlNumber(crownZ)}" size="${xmlNumber(obstacle.crownRadius)} ${xmlNumber(obstacle.crownRadius)} ${xmlNumber((obstacle.height - trunkHeight) / 2)}" rgba="0.23 0.46 0.29 1"/>\n    </body>`;
+    }
+    if (obstacle.shape === "arch") {
+      const thickness = Math.min(clampedThickness(obstacle), obstacle.width / 3);
+      const clearance = Math.max(0.2, Math.min(obstacle.clearance, obstacle.height - thickness));
+      const legX = (obstacle.width - thickness) / 2;
+      const radiusX = Math.max(thickness, legX);
+      const radiusZ = Math.max(thickness, obstacle.height - clearance - thickness / 2);
+      const count = 9;
+      const archSegments = Array.from({ length: count }, (_, segment) => {
+        const theta = Math.PI * segment / (count - 1);
+        const x = radiusX * Math.cos(theta);
+        const archZ = clearance + radiusZ * Math.sin(theta);
+        const dx = -radiusX * Math.sin(theta);
+        const dz = radiusZ * Math.cos(theta);
+        const tangent = Math.atan2(dz, dx);
+        const length = Math.PI * Math.max(radiusX, radiusZ) / (count - 1) * 0.62;
+        return `      <geom name="${body}_arch_${segment}" type="box" pos="${xmlNumber(x)} 0 ${xmlNumber(archZ)}" euler="0 ${xmlNumber(-tangent)} 0" size="${xmlNumber(length / 2)} ${xmlNumber(obstacle.depth / 2)} ${xmlNumber(thickness / 2)}" rgba="0.40 0.45 0.43 1"/>`;
+      }).join("\n");
+      return `    <body name="${body}" pos="${xmlNumber(obstacle.x)} ${xmlNumber(obstacle.y)} 0" euler="0 0 ${xmlNumber(angle)}">\n      <geom name="${body}_left" type="box" pos="${xmlNumber(-legX)} 0 ${xmlNumber(clearance / 2)}" size="${xmlNumber(thickness / 2)} ${xmlNumber(obstacle.depth / 2)} ${xmlNumber(clearance / 2)}" rgba="0.34 0.39 0.38 1"/>\n      <geom name="${body}_right" type="box" pos="${xmlNumber(legX)} 0 ${xmlNumber(clearance / 2)}" size="${xmlNumber(thickness / 2)} ${xmlNumber(obstacle.depth / 2)} ${xmlNumber(clearance / 2)}" rgba="0.34 0.39 0.38 1"/>\n${archSegments}\n    </body>`;
     }
     return `${header}\n      <geom name="${body}_geom" type="box" size="${xmlNumber(obstacle.width / 2)} ${xmlNumber(obstacle.depth / 2)} ${xmlNumber(z)}" rgba="0.25 0.31 0.34 1"/>\n    </body>`;
   }).join("\n");
 
   return `<!-- Generated by Neural Tracker Map Studio. Units: metres, angles: radians. -->
 <mujoco model="${safeName(file.name)}">
+  <compiler angle="radian"/>
   <default>
     <geom contype="2" conaffinity="1" friction="0.8 0.01 0.001" solref="0.002 1" solimp="0.95 0.99 0.01 0.5 2"/>
   </default>
+  <asset>
+${meshAssets}
+  </asset>
   <worldbody>
 ${boundaryXml(file)}
 ${geoms}
@@ -163,6 +203,7 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(STARTER_OBSTACLES[1].id);
   const [snap, setSnap] = useState(true);
   const [placing, setPlacing] = useState(true);
+  const [viewMode, setViewMode] = useState<"2d" | "3d">("2d");
   const [tracker, setTracker] = useState(TRACKER_START);
   const [target, setTarget] = useState(TARGET_START);
   const [toast, setToast] = useState("");
@@ -329,7 +370,7 @@ export default function Home() {
       setBoundary(parsed.boundary ?? DEFAULT_BOUNDARY);
       setTracker(parsed.tracker ?? TRACKER_START);
       setTarget(parsed.target ?? TARGET_START);
-      setObstacles(parsed.obstacles);
+      setObstacles(parsed.obstacles.map((item) => ({ ...preset({}), ...item })));
       setSelectedId(null);
       setUndoStack([]);
       setRedoStack([]);
@@ -341,7 +382,7 @@ export default function Home() {
     }
   };
 
-  const footprint = (item: Obstacle) => item.shape === "cylinder" ? { width: item.radius * 2, depth: item.radius * 2 } : { width: item.width, depth: item.depth };
+  const footprint = (item: Obstacle) => item.shape === "cylinder" ? { width: item.radius * 2, depth: item.radius * 2 } : item.shape === "tree" ? { width: item.crownRadius * 2, depth: item.crownRadius * 2 } : { width: item.width, depth: item.depth };
 
   return <main className="app-shell">
     <header className="topbar">
@@ -357,6 +398,7 @@ export default function Home() {
 
     <section className="workspace">
       <aside className="left-panel panel">
+        <div className="panel-heading"><div><small>01 / LIBRARY</small><h2>障碍物形状</h2></div><span className="step-pill">12</span></div>
         <div className="shape-grid">
           {SHAPES.map((item) => <button key={item.id} className={`shape-card ${shape === item.id ? "active" : ""}`} onClick={() => selectShape(item.id)}><span>{item.glyph}</span><b>{item.title}</b><small>{item.hint}</small></button>)}
         </div>
@@ -364,10 +406,15 @@ export default function Home() {
         <div className="section-divider" />
         <div className="subheading"><div><small>02 / DIMENSIONS</small><h3>设置尺寸</h3></div><span>单位：米</span></div>
         <div className="field-grid">
-          {shape === "cylinder" ? <NumberField label="半径" value={draft.radius} min={0.05} onChange={(value) => setDraft({ ...draft, radius: value })} /> : <>
-            <NumberField label={shape === "wall" ? "长度" : "宽度"} value={draft.width} min={0.05} onChange={(value) => setDraft({ ...draft, width: value, ...(shape === "l_shape" ? { thickness: Math.max(0.05, Math.min(draft.thickness, value, draft.depth)) } : {}) })} />
-            <NumberField label={shape === "wall" ? "厚度" : "深度"} value={shape === "wall" ? draft.depth : draft.depth} min={0.05} onChange={(value) => setDraft({ ...draft, depth: value, ...(shape === "wall" ? { thickness: value } : {}), ...(shape === "l_shape" ? { thickness: Math.max(0.05, Math.min(draft.thickness, draft.width, value)) } : {}) })} />
-            {shape === "l_shape" && <NumberField label="臂厚" value={draft.thickness} min={0.05} max={Math.min(draft.width, draft.depth)} onChange={(value) => setDraft({ ...draft, thickness: Math.max(0.05, Math.min(value, draft.width, draft.depth)) })} />}
+          {(shape === "cylinder" || shape === "tree") ? <>
+            <NumberField label={shape === "tree" ? "树干半径" : "半径"} value={draft.radius} min={0.05} onChange={(value) => setDraft({ ...draft, radius: value })} />
+            {shape === "tree" && <NumberField label="树冠半径" value={draft.crownRadius} min={draft.radius} onChange={(value) => setDraft({ ...draft, crownRadius: Math.max(value, draft.radius) })} />}
+          </> : <>
+            <NumberField label={shape === "wall" ? "长度" : "宽度"} value={draft.width} min={0.05} onChange={(value) => setDraft({ ...draft, width: value, ...(isCompositeShape(shape) ? { thickness: Math.max(0.05, Math.min(draft.thickness, value, draft.depth)) } : {}) })} />
+            <NumberField label={shape === "wall" ? "厚度" : "深度"} value={draft.depth} min={0.05} onChange={(value) => setDraft({ ...draft, depth: value, ...(shape === "wall" ? { thickness: value } : {}), ...(isCompositeShape(shape) ? { thickness: Math.max(0.05, Math.min(draft.thickness, draft.width, value)) } : {}) })} />
+            {(isCompositeShape(shape) || shape === "arch") && <NumberField label="壁厚" value={draft.thickness} min={0.05} max={Math.min(draft.width, draft.depth)} onChange={(value) => setDraft({ ...draft, thickness: Math.max(0.05, Math.min(value, draft.width, draft.depth)) })} />}
+            {shape === "frustum" && <NumberField label="顶面比例" value={draft.topScale * 100} min={10} max={95} step={5} suffix="%" onChange={(value) => setDraft({ ...draft, topScale: Math.max(.1, Math.min(.95, value / 100)) })} />}
+            {shape === "arch" && <NumberField label="净空高度" value={draft.clearance} min={0.2} max={draft.height - 0.05} onChange={(value) => setDraft({ ...draft, clearance: Math.max(.2, Math.min(value, draft.height - .05)) })} />}
           </>}
           <NumberField label="高度" value={draft.height} min={0.05} onChange={(value) => setDraft({ ...draft, height: value })} />
         </div>
@@ -379,9 +426,10 @@ export default function Home() {
       <section className="canvas-column">
         <div className="canvas-toolbar">
           <div className="toolbar-group"><button onClick={undo} disabled={!undoStack.length} title="撤销">↶</button><button onClick={redo} disabled={!redoStack.length} title="重做">↷</button><i /><button className={placing ? "active" : ""} onClick={() => setPlacing(!placing)}>⌖ 放置</button><button className={!placing ? "active" : ""} onClick={() => setPlacing(false)}>↖ 选择</button></div>
+          <div className="view-switch"><button className={viewMode === "2d" ? "active" : ""} onClick={() => setViewMode("2d")}>2D 编辑</button><button className={viewMode === "3d" ? "active" : ""} onClick={() => { setViewMode("3d"); setPlacing(false); }}>3D 预览</button></div>
           <label className="snap-control"><input type="checkbox" checked={snap} onChange={(event) => setSnap(event.target.checked)} /> 网格吸附 <kbd>{Math.max(resolution, 0.25)} m</kbd></label>
         </div>
-        <div ref={mapRef} className={`map-wrap ${placing ? "placing" : ""}`} style={{ aspectRatio: `${mapWidth} / ${mapHeight}` }} onPointerDown={mapPointerDown}>
+        {viewMode === "3d" ? <ThreePreview width={mapWidth} height={mapHeight} boundary={boundary} obstacles={obstacles} selectedId={selectedId} tracker={tracker} target={target} /> : <div ref={mapRef} className={`map-wrap ${placing ? "placing" : ""}`} style={{ aspectRatio: `${mapWidth} / ${mapHeight}` }} onPointerDown={mapPointerDown}>
           {boundary.enabled && <div className="boundary-walls" aria-label={`neural_tracker 外墙，厚 ${boundary.thickness} 米`}>
             <i className="boundary-wall boundary-top" style={{ height: `${boundary.thickness / mapHeight * 100}%` }} />
             <i className="boundary-wall boundary-bottom" style={{ height: `${boundary.thickness / mapHeight * 100}%` }} />
@@ -392,7 +440,7 @@ export default function Home() {
           <div className="origin-label">0, 0</div>
           {obstacles.map((item) => {
             const size = footprint(item);
-            const lThickness = Math.max(0.05, Math.min(item.thickness, item.width, item.depth));
+            const parts = isCompositeShape(item.shape) ? localRects(item) : [];
             return <button
               type="button"
               data-obstacle
@@ -404,12 +452,17 @@ export default function Home() {
               onPointerMove={obstaclePointerMove}
               onPointerUp={obstaclePointerUp}
               onPointerCancel={obstaclePointerUp}
-            ><span className="obstacle-label" style={{ transform: `rotate(${item.angle}deg)` }}>{selectedId === item.id ? item.name : ""}</span>{item.shape === "l_shape" && <><i className="l-horizontal" style={{ height: `${lThickness / item.depth * 100}%` }} /><i className="l-vertical" style={{ width: `${lThickness / item.width * 100}%` }} /></>}</button>;
+            ><span className="obstacle-label" style={{ transform: `rotate(${item.angle}deg)` }}>{selectedId === item.id ? item.name : ""}</span>
+              {parts.map((part, index) => <i key={index} className="shape-part" style={{ left: `${(part.x / item.width + .5) * 100}%`, top: `${(.5 - part.y / item.depth) * 100}%`, width: `${part.width / item.width * 100}%`, height: `${part.depth / item.depth * 100}%` }} />)}
+              {item.shape === "frustum" && <i className="frustum-top" style={{ inset: `${(1 - item.topScale) * 50}%` }} />}
+              {item.shape === "arch" && <><i className="arch-leg arch-left" style={{ width: `${clampedThickness(item) / item.width * 100}%` }} /><i className="arch-leg arch-right" style={{ width: `${clampedThickness(item) / item.width * 100}%` }} /><i className="arch-span" /></>}
+              {item.shape === "tree" && <><i className="tree-crown" /><i className="tree-trunk" style={{ width: `${item.radius / item.crownRadius * 100}%`, height: `${item.radius / item.crownRadius * 100}%` }} /></>}
+            </button>;
           })}
           <div className="target-marker" style={{ left: `${(target.x / mapWidth + 0.5) * 100}%`, top: `${(0.5 - target.y / mapHeight) * 100}%`, transform: `translate(-50%, -50%) rotate(${-target.yaw}deg)` }}><i /><span>目标</span></div>
           <div className="tracker-marker" style={{ left: `${(tracker.x / mapWidth + 0.5) * 100}%`, top: `${(0.5 - tracker.y / mapHeight) * 100}%`, transform: `translate(-50%, -50%) rotate(${-tracker.yaw}deg)` }}><i>NT</i><span>tracker</span></div>
           <span className="scale-label scale-left">−{mapWidth / 2}m</span><span className="scale-label scale-right">+{mapWidth / 2}m</span>
-        </div>
+        </div>}
         <div className="canvas-footer"><span><i className="legend boundary-dot" /> 外墙</span><span><i className="legend obstacle-dot" /> 障碍物</span><span><i className="legend target-dot" /> 目标</span><span><i className="legend tracker-dot" /> tracker</span><strong>{obstacles.length} 个内部障碍物 · {mapWidth * mapHeight} m²</strong></div>
       </section>
 
@@ -424,9 +477,14 @@ export default function Home() {
           <label className="angle-control inspector-angle"><input aria-label="旋转角度滑杆" type="range" min="-180" max="180" value={selected.angle} onChange={(event) => updateObstacle(selected.id, { angle: Number(event.target.value) })} /><span className="ticks"><i>−180°</i><i>0°</i><i>180°</i></span></label>
           <div className="subheading compact"><div><small>GEOMETRY</small><h3>几何尺寸</h3></div></div>
           <div className="field-grid">
-            {selected.shape === "cylinder" ? <NumberField label="半径" value={selected.radius} min={0.05} onChange={(value) => updateObstacle(selected.id, { radius: value })} /> : <><NumberField label="宽度" value={selected.width} min={0.05} onChange={(value) => updateObstacle(selected.id, { width: value, ...(selected.shape === "l_shape" ? { thickness: Math.max(0.05, Math.min(selected.thickness, value, selected.depth)) } : {}) })} /><NumberField label="深度" value={selected.depth} min={0.05} onChange={(value) => updateObstacle(selected.id, { depth: value, ...(selected.shape === "l_shape" ? { thickness: Math.max(0.05, Math.min(selected.thickness, selected.width, value)) } : {}) })} /></>}
+            {(selected.shape === "cylinder" || selected.shape === "tree") ? <>
+              <NumberField label={selected.shape === "tree" ? "树干半径" : "半径"} value={selected.radius} min={0.05} onChange={(value) => updateObstacle(selected.id, { radius: value })} />
+              {selected.shape === "tree" && <NumberField label="树冠半径" value={selected.crownRadius} min={selected.radius} onChange={(value) => updateObstacle(selected.id, { crownRadius: Math.max(value, selected.radius) })} />}
+            </> : <><NumberField label="宽度" value={selected.width} min={0.05} onChange={(value) => updateObstacle(selected.id, { width: value, ...(isCompositeShape(selected.shape) ? { thickness: Math.max(0.05, Math.min(selected.thickness, value, selected.depth)) } : {}) })} /><NumberField label="深度" value={selected.depth} min={0.05} onChange={(value) => updateObstacle(selected.id, { depth: value, ...(isCompositeShape(selected.shape) ? { thickness: Math.max(0.05, Math.min(selected.thickness, selected.width, value)) } : {}) })} /></>}
             <NumberField label="高度" value={selected.height} min={0.05} onChange={(value) => updateObstacle(selected.id, { height: value })} />
-            {selected.shape === "l_shape" && <NumberField label="臂厚" value={selected.thickness} min={0.05} max={Math.min(selected.width, selected.depth)} onChange={(value) => updateObstacle(selected.id, { thickness: Math.max(0.05, Math.min(value, selected.width, selected.depth)) })} />}
+            {(isCompositeShape(selected.shape) || selected.shape === "arch") && <NumberField label="壁厚" value={selected.thickness} min={0.05} max={Math.min(selected.width, selected.depth)} onChange={(value) => updateObstacle(selected.id, { thickness: Math.max(0.05, Math.min(value, selected.width, selected.depth)) })} />}
+            {selected.shape === "frustum" && <NumberField label="顶面比例" value={selected.topScale * 100} min={10} max={95} step={5} suffix="%" onChange={(value) => updateObstacle(selected.id, { topScale: Math.max(.1, Math.min(.95, value / 100)) })} />}
+            {selected.shape === "arch" && <NumberField label="净空高度" value={selected.clearance} min={0.2} max={selected.height - .05} onChange={(value) => updateObstacle(selected.id, { clearance: Math.max(.2, Math.min(value, selected.height - .05)) })} />}
           </div>
           <div className="inspector-actions"><button onClick={() => { const copy = { ...selected, id: uid(), name: `${selected.name} 副本`, x: rounded(selected.x + 0.5), y: rounded(selected.y - 0.5) }; commit([...obstacles, copy]); setSelectedId(copy.id); }}>⧉ 复制</button><button className="danger" onClick={removeSelected}>⌫ 删除</button></div>
         </div> : <div className="empty-inspector"><span>↖</span><b>未选择障碍物</b><p>点击画布中的障碍物，在此精确调整位置、角度与尺寸。</p></div>}
