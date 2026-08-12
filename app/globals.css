@@ -93,7 +93,8 @@ kbd { padding: 4px 6px; border: 1px solid #d8ddd6; border-bottom-width: 2px; bor
 .axis-y i { left: 0; top: 0; width: 1px; height: 100%; }
 .axis-y span { left: 6px; top: 5px; }
 .origin-label { position: absolute; z-index: 2; left: calc(50% + 6px); top: calc(50% + 5px); color: #7c8b82; font: 8px var(--font-geist-mono), monospace; }
-.obstacle { position: absolute; z-index: 3; min-width: 5px; min-height: 5px; padding: 0; border: 1px solid #33443c; outline: 0; background: #5b6a63; cursor: pointer; box-shadow: 0 3px 5px #18211d1c; }
+.obstacle { position: absolute; z-index: 3; min-width: 5px; min-height: 5px; padding: 0; border: 1px solid #33443c; outline: 0; background: #5b6a63; cursor: grab; box-shadow: 0 3px 5px #18211d1c; touch-action: none; }
+.obstacle:active { cursor: grabbing; }
 .obstacle.wall { background: #42534b; }
 .obstacle.cylinder { border-radius: 50%; background: #566a5b; box-shadow: inset -5px -5px 0 #33463a33, 0 3px 5px #18211d18; }
 .obstacle.l_shape { border: 0; background: transparent; box-shadow: none; }
@@ -106,7 +107,6 @@ kbd { padding: 4px 6px; border: 1px solid #d8ddd6; border-bottom-width: 2px; bor
 .target-marker, .tracker-marker { position: absolute; z-index: 4; pointer-events: none; }
 .target-marker i { display: block; width: 14px; height: 14px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: #ff8e44; border: 2px solid #fff; box-shadow: 0 0 0 1px #dc6a2d, 0 3px 8px #dc6a2d44; }
 .target-marker span, .tracker-marker span { position: absolute; left: 50%; top: 19px; width: max-content; transform: translateX(-50%); color: #794119; font-size: 8px; font-weight: 800; }
-.tracker-marker { left: 50%; top: 50%; transform: translate(-50%, -50%); }
 .tracker-marker i { display: grid; place-items: center; width: 25px; height: 25px; border: 2px solid #fff; border-radius: 7px; color: #fff; background: #1777d2; box-shadow: 0 0 0 1px #135a9a, 0 3px 8px #165f9d55; font-style: normal; font-size: 8px; font-weight: 900; }
 .tracker-marker span { top: 31px; color: #1e5d94; }
 .scale-label { position: absolute; bottom: 5px; color: #8a958e; font: 8px var(--font-geist-mono), monospace; }
@@ -132,6 +132,13 @@ kbd { padding: 4px 6px; border: 1px solid #d8ddd6; border-bottom-width: 2px; bor
 .empty-inspector > span { display: grid; place-items: center; width: 48px; height: 48px; border: 1px dashed #bdc6bf; border-radius: 50%; font-size: 22px; }
 .empty-inspector b { margin-top: 14px; font-size: 11px; }.empty-inspector p { font-size: 9px; line-height: 1.6; }
 .map-settings { margin-top: 25px; padding-top: 1px; border-top: 1px solid var(--line); }
+.start-poses { display: grid; gap: 7px; margin-top: 15px; }
+.start-poses > div { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 7px 10px; border: 1px solid #e0e5de; border-radius: 8px; background: #fff; }
+.start-poses p { margin: 0; }
+.start-poses small, .start-poses b { display: block; }
+.start-poses small { color: #8a958e; font-size: 7px; font-weight: 800; letter-spacing: .1em; }
+.start-poses b { margin-top: 3px; color: #3c4941; font: 9px var(--font-geist-mono), monospace; }
+.pose-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 2px; }
 .toast { position: fixed; z-index: 50; left: 50%; bottom: 24px; transform: translate(-50%, 16px); padding: 10px 15px; border-radius: 8px; color: #fff; background: #182b22; opacity: 0; pointer-events: none; font-size: 11px; font-weight: 700; transition: .2s ease; box-shadow: 0 10px 30px #17251e33; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 

@@ -23,6 +23,7 @@ type MapFile = {
   version: 1;
   name: string;
   map: { width: number; height: number; resolution: number };
+  tracker: { x: number; y: number; yaw: number };
   target: { x: number; y: number; yaw: number };
   obstacles: Obstacle[];
 };
@@ -47,6 +48,21 @@ const STARTER_OBSTACLES: Obstacle[] = [
   { id: "tree-a", name: "圆柱 01", shape: "cylinder", x: -2.2, y: -3.4, width: 1.2, depth: 1.2, height: 1.8, thickness: 0.3, radius: 0.65, angle: 0 },
   { id: "box-a", name: "箱体 01", shape: "box", x: 3.6, y: -3.8, width: 1.8, depth: 1.25, height: 1.2, thickness: 0.3, radius: 0.6, angle: -18 },
 ];
+
+const TRACKER_START = { x: -9.5, y: 0, yaw: 0 };
+const TARGET_START = { x: -7, y: 0, yaw: 0 };
+
+type DragState = {
+  id: string;
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  originX: number;
+  originY: number;
+  mapRect: DOMRect;
+  before: Obstacle[];
+  moved: boolean;
+};
 
 const uid = () => `obs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 const rounded = (value: number) => Math.round(value * 1000) / 1000;
@@ -110,8 +126,8 @@ function NumberField({ label, value, min, max, step = 0.1, suffix = "m", onChang
 
 export default function Home() {
   const [mapName, setMapName] = useState("g1_custom_test");
-  const [mapWidth, setMapWidth] = useState(20);
-  const [mapHeight, setMapHeight] = useState(20);
+  const [mapWidth, setMapWidth] = useState(80);
+  const [mapHeight, setMapHeight] = useState(80);
   const [resolution, setResolution] = useState(0.05);
   const [shape, setShape] = useState<Shape>("wall");
   const [draft, setDraft] = useState(PRESETS.wall);
@@ -119,14 +135,17 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(STARTER_OBSTACLES[1].id);
   const [snap, setSnap] = useState(true);
   const [placing, setPlacing] = useState(true);
-  const [target, setTarget] = useState({ x: 3, y: 0, yaw: 0 });
+  const [tracker, setTracker] = useState(TRACKER_START);
+  const [target, setTarget] = useState(TARGET_START);
   const [toast, setToast] = useState("");
   const [undoStack, setUndoStack] = useState<Obstacle[][]>([]);
   const [redoStack, setRedoStack] = useState<Obstacle[][]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
+  const mapRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<DragState | null>(null);
 
   const selected = obstacles.find((item) => item.id === selectedId) ?? null;
-  const mapFile = useMemo<MapFile>(() => ({ format: "neural-tracker-map", version: 1, name: mapName, map: { width: mapWidth, height: mapHeight, resolution }, target, obstacles }), [mapName, mapWidth, mapHeight, resolution, target, obstacles]);
+  const mapFile = useMemo<MapFile>(() => ({ format: "neural-tracker-map", version: 1, name: mapName, map: { width: mapWidth, height: mapHeight, resolution }, tracker, target, obstacles }), [mapName, mapWidth, mapHeight, resolution, tracker, target, obstacles]);
 
   const announce = useCallback((message: string) => {
     setToast(message);
@@ -166,6 +185,57 @@ export default function Home() {
     setSelectedId(item.id);
     setPlacing(false);
     announce(`已放置：${item.name}`);
+  };
+
+  const obstaclePointerDown = (event: PointerEvent<HTMLButtonElement>, item: Obstacle) => {
+    event.stopPropagation();
+    const mapRect = mapRef.current?.getBoundingClientRect();
+    if (!mapRect) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setSelectedId(item.id);
+    setPlacing(false);
+    dragRef.current = {
+      id: item.id,
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      originX: item.x,
+      originY: item.y,
+      mapRect,
+      before: obstacles,
+      moved: false,
+    };
+  };
+
+  const obstaclePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const deltaX = (event.clientX - drag.startClientX) / drag.mapRect.width * mapWidth;
+    const deltaY = -(event.clientY - drag.startClientY) / drag.mapRect.height * mapHeight;
+    if (!drag.moved && Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY) < 2) return;
+    drag.moved = true;
+    const grid = Math.max(resolution, 0.25);
+    const clampX = (value: number) => Math.max(-mapWidth / 2, Math.min(mapWidth / 2, value));
+    const clampY = (value: number) => Math.max(-mapHeight / 2, Math.min(mapHeight / 2, value));
+    let x = clampX(drag.originX + deltaX);
+    let y = clampY(drag.originY + deltaY);
+    if (snap) {
+      x = Math.round(x / grid) * grid;
+      y = Math.round(y / grid) * grid;
+    }
+    setObstacles((current) => current.map((obstacle) => obstacle.id === drag.id ? { ...obstacle, x: rounded(x), y: rounded(y) } : obstacle));
+  };
+
+  const obstaclePointerUp = (event: PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (drag.moved) {
+      setUndoStack((stack) => [...stack.slice(-29), drag.before]);
+      setRedoStack([]);
+      announce("障碍物位置已更新");
+    }
+    dragRef.current = null;
   };
 
   const undo = useCallback(() => {
@@ -228,7 +298,8 @@ export default function Home() {
       setMapWidth(parsed.map.width);
       setMapHeight(parsed.map.height);
       setResolution(parsed.map.resolution);
-      setTarget(parsed.target ?? { x: 3, y: 0, yaw: 0 });
+      setTracker(parsed.tracker ?? TRACKER_START);
+      setTarget(parsed.target ?? TARGET_START);
       setObstacles(parsed.obstacles);
       setSelectedId(null);
       setUndoStack([]);
@@ -257,7 +328,6 @@ export default function Home() {
 
     <section className="workspace">
       <aside className="left-panel panel">
-        <div className="panel-heading"><div><small>01 / OBSTACLE</small><h2>选择障碍物</h2></div><span className="step-pill">1</span></div>
         <div className="shape-grid">
           {SHAPES.map((item) => <button key={item.id} className={`shape-card ${shape === item.id ? "active" : ""}`} onClick={() => selectShape(item.id)}><span>{item.glyph}</span><b>{item.title}</b><small>{item.hint}</small></button>)}
         </div>
@@ -274,7 +344,7 @@ export default function Home() {
         </div>
         <label className="angle-control"><span><b>放置角度</b><em>{draft.angle}°</em></span><input aria-label="放置角度" type="range" min="-180" max="180" step="1" value={draft.angle} onChange={(event) => setDraft({ ...draft, angle: Number(event.target.value) })} /></label>
         <button className={`place-button ${placing ? "armed" : ""}`} onClick={() => { setPlacing(true); setSelectedId(null); }}>{placing ? "在画布中点击放置…" : "+ 放置一个障碍物"}</button>
-        <p className="microcopy">放置后可选择障碍物，精确修改坐标与角度。</p>
+        <p className="microcopy">放置后可直接拖动障碍物，也可在属性面板精确修改坐标与角度。</p>
       </aside>
 
       <section className="canvas-column">
@@ -282,7 +352,7 @@ export default function Home() {
           <div className="toolbar-group"><button onClick={undo} disabled={!undoStack.length} title="撤销">↶</button><button onClick={redo} disabled={!redoStack.length} title="重做">↷</button><i /><button className={placing ? "active" : ""} onClick={() => setPlacing(!placing)}>⌖ 放置</button><button className={!placing ? "active" : ""} onClick={() => setPlacing(false)}>↖ 选择</button></div>
           <label className="snap-control"><input type="checkbox" checked={snap} onChange={(event) => setSnap(event.target.checked)} /> 网格吸附 <kbd>{Math.max(resolution, 0.25)} m</kbd></label>
         </div>
-        <div className={`map-wrap ${placing ? "placing" : ""}`} style={{ aspectRatio: `${mapWidth} / ${mapHeight}` }} onPointerDown={mapPointerDown}>
+        <div ref={mapRef} className={`map-wrap ${placing ? "placing" : ""}`} style={{ aspectRatio: `${mapWidth} / ${mapHeight}` }} onPointerDown={mapPointerDown}>
           <div className="axis axis-y"><span>+Y</span><i /></div><div className="axis axis-x"><span>+X</span><i /></div>
           <div className="origin-label">0, 0</div>
           {obstacles.map((item) => {
@@ -290,15 +360,18 @@ export default function Home() {
             return <button
               type="button"
               data-obstacle
-              aria-label={`${item.name}，点击选择`}
+              aria-label={`${item.name}，点击选择或拖动`}
               key={item.id}
               className={`obstacle ${item.shape} ${selectedId === item.id ? "selected" : ""}`}
               style={{ left: `${(item.x / mapWidth + 0.5) * 100}%`, top: `${(0.5 - item.y / mapHeight) * 100}%`, width: `${size.width / mapWidth * 100}%`, height: `${size.depth / mapHeight * 100}%`, transform: `translate(-50%, -50%) rotate(${-item.angle}deg)` }}
-              onPointerDown={(event) => { event.stopPropagation(); setSelectedId(item.id); setPlacing(false); }}
+              onPointerDown={(event) => obstaclePointerDown(event, item)}
+              onPointerMove={obstaclePointerMove}
+              onPointerUp={obstaclePointerUp}
+              onPointerCancel={obstaclePointerUp}
             ><span className="obstacle-label" style={{ transform: `rotate(${item.angle}deg)` }}>{selectedId === item.id ? item.name : ""}</span>{item.shape === "l_shape" && <><i className="l-horizontal" /><i className="l-vertical" /></>}</button>;
           })}
           <div className="target-marker" style={{ left: `${(target.x / mapWidth + 0.5) * 100}%`, top: `${(0.5 - target.y / mapHeight) * 100}%`, transform: `translate(-50%, -50%) rotate(${-target.yaw}deg)` }}><i /><span>目标</span></div>
-          <div className="tracker-marker"><i>G1</i><span>机器人起点</span></div>
+          <div className="tracker-marker" style={{ left: `${(tracker.x / mapWidth + 0.5) * 100}%`, top: `${(0.5 - tracker.y / mapHeight) * 100}%`, transform: `translate(-50%, -50%) rotate(${-tracker.yaw}deg)` }}><i>NT</i><span>tracker</span></div>
           <span className="scale-label scale-left">−{mapWidth / 2}m</span><span className="scale-label scale-right">+{mapWidth / 2}m</span>
         </div>
         <div className="canvas-footer"><span><i className="legend obstacle-dot" /> 障碍物</span><span><i className="legend target-dot" /> 目标</span><span><i className="legend tracker-dot" /> G1 起点</span><strong>{obstacles.length} 个障碍物 · {mapWidth * mapHeight} m²</strong></div>
@@ -325,6 +398,10 @@ export default function Home() {
         <div className="map-settings">
           <div className="subheading compact"><div><small>MAP SETTINGS</small><h3>地图参数</h3></div></div>
           <div className="field-grid"><NumberField label="宽度" value={mapWidth} min={5} max={100} step={1} onChange={setMapWidth} /><NumberField label="高度" value={mapHeight} min={5} max={100} step={1} onChange={setMapHeight} /><NumberField label="分辨率" value={resolution} min={0.01} max={1} step={0.01} onChange={setResolution} /></div>
+          <div className="start-poses">
+            <div><span className="pose-dot tracker-dot" /><p><small>TRACKER 起点</small><b>−9.5, 0.0, 0°</b></p></div>
+            <div><span className="pose-dot target-dot" /><p><small>TARGET 起点</small><b>−7.0, 0.0, 0°</b></p></div>
+          </div>
         </div>
       </aside>
     </section>
