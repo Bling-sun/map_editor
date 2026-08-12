@@ -1,7 +1,9 @@
 "use client";
 
 import { ChangeEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import MapGenerator from "./MapGenerator";
 import ThreePreview from "./ThreePreview";
+import { generateNonOverlappingMap, GeneratorConfig } from "./map-generator";
 import { Obstacle, Shape, clampedThickness, isCompositeShape, localRects } from "./map-types";
 
 type MapFile = {
@@ -204,6 +206,7 @@ export default function Home() {
   const [snap, setSnap] = useState(true);
   const [placing, setPlacing] = useState(true);
   const [viewMode, setViewMode] = useState<"2d" | "3d">("2d");
+  const [generatorOpen, setGeneratorOpen] = useState(false);
   const [tracker, setTracker] = useState(TRACKER_START);
   const [target, setTarget] = useState(TARGET_START);
   const [toast, setToast] = useState("");
@@ -227,6 +230,27 @@ export default function Home() {
     setRedoStack([]);
     setObstacles(next);
   }, [obstacles]);
+
+  const closeGenerator = useCallback(() => setGeneratorOpen(false), []);
+
+  const generateMap = (config: GeneratorConfig, spacing: number) => {
+    const result = generateNonOverlappingMap({
+      config,
+      mapWidth,
+      mapHeight,
+      boundaryThickness: boundary.enabled ? boundary.thickness : 0,
+      tracker,
+      target,
+      spacing,
+      snapGrid: snap ? Math.max(resolution, 0.25) : null,
+    });
+    if (!result.ok) return result.error;
+    commit(result.obstacles);
+    setSelectedId(null);
+    setPlacing(false);
+    announce(`已生成 ${result.obstacles.length} 个无重叠障碍物`);
+    return null;
+  };
 
   const updateObstacle = (id: string, patch: Partial<Obstacle>) => {
     commit(obstacles.map((item) => item.id === id ? { ...item, ...patch } : item));
@@ -408,6 +432,7 @@ export default function Home() {
       <div className="brand"><span className="brand-mark">N</span><div><b>Neural Tracker</b><small>MAP STUDIO</small></div></div>
       <div className="map-title"><span className="status-dot" /> <input aria-label="地图名称" value={mapName} onChange={(event) => setMapName(event.target.value)} /><span className="saved">本地编辑</span></div>
       <div className="header-actions">
+        <button className="generate-button" onClick={() => setGeneratorOpen(true)}>⚡ 一键生成</button>
         <button className="ghost-button" onClick={() => fileInput.current?.click()}>↥ 导入 JSON</button>
         <input ref={fileInput} hidden type="file" accept="application/json,.json" onChange={importJson} />
         <button className="ghost-button" onClick={exportJson}>↓ 保存工程</button>
@@ -519,6 +544,7 @@ export default function Home() {
         </div>
       </aside>
     </section>
+    <MapGenerator open={generatorOpen} shapes={SHAPES} onClose={closeGenerator} onGenerate={generateMap} />
     <div className={`toast ${toast ? "show" : ""}`} role="status">✓ {toast}</div>
   </main>;
 }
