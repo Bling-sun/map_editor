@@ -105,8 +105,8 @@ kbd { padding: 4px 6px; border: 1px solid #d8ddd6; border-bottom-width: 2px; bor
 .obstacle.cylinder { border-radius: 50%; background: #566a5b; box-shadow: inset -5px -5px 0 #33463a33, 0 3px 5px #18211d18; }
 .obstacle.l_shape { border: 0; background: transparent; box-shadow: none; }
 .obstacle.l_shape > i { position: absolute; display: block; border: 1px solid #33443c; background: #4d5f56; box-shadow: 0 3px 5px #18211d1c; }
-.l-horizontal { left: 0; bottom: 0; width: 100%; height: 14%; min-height: 4px; }
-.l-vertical { left: 0; top: 0; width: 14%; min-width: 4px; height: 100%; }
+.l-horizontal { left: 0; bottom: 0; width: 100%; min-height: 1px; }
+.l-vertical { left: 0; top: 0; min-width: 1px; height: 100%; }
 .obstacle.selected { border-color: var(--blue); box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--blue), 0 7px 14px #1d4ed829; }
 .obstacle.l_shape.selected { outline: 2px dashed var(--blue); outline-offset: 3px; }
 .obstacle-label { position: absolute; left: 50%; bottom: calc(100% + 8px); width: max-content; max-width: 110px; transform-origin: center; color: #1f4fb9; background: #fff; border: 1px solid #c8d7fa; border-radius: 5px; padding: 3px 6px; font-size: 8px; font-weight: 800; box-shadow: 0 2px 7px #1f29371c; }

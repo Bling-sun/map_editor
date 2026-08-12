@@ -125,9 +125,10 @@ function toMujoco(file: MapFile) {
       return `${header}\n      <geom name="${body}_geom" type="cylinder" size="${xmlNumber(obstacle.radius)} ${xmlNumber(z)}" rgba="0.27 0.34 0.32 1"/>\n    </body>`;
     }
     if (obstacle.shape === "l_shape") {
-      const horizontalY = -(obstacle.depth - obstacle.thickness) / 2;
-      const verticalX = -(obstacle.width - obstacle.thickness) / 2;
-      return `${header}\n      <geom name="${body}_horizontal" type="box" pos="0 ${xmlNumber(horizontalY)} 0" size="${xmlNumber(obstacle.width / 2)} ${xmlNumber(obstacle.thickness / 2)} ${xmlNumber(z)}" rgba="0.22 0.28 0.31 1"/>\n      <geom name="${body}_vertical" type="box" pos="${xmlNumber(verticalX)} 0 0" size="${xmlNumber(obstacle.thickness / 2)} ${xmlNumber(obstacle.depth / 2)} ${xmlNumber(z)}" rgba="0.22 0.28 0.31 1"/>\n    </body>`;
+      const thickness = Math.max(0.05, Math.min(obstacle.thickness, obstacle.width, obstacle.depth));
+      const horizontalY = -(obstacle.depth - thickness) / 2;
+      const verticalX = -(obstacle.width - thickness) / 2;
+      return `${header}\n      <geom name="${body}_horizontal" type="box" pos="0 ${xmlNumber(horizontalY)} 0" size="${xmlNumber(obstacle.width / 2)} ${xmlNumber(thickness / 2)} ${xmlNumber(z)}" rgba="0.22 0.28 0.31 1"/>\n      <geom name="${body}_vertical" type="box" pos="${xmlNumber(verticalX)} 0 0" size="${xmlNumber(thickness / 2)} ${xmlNumber(obstacle.depth / 2)} ${xmlNumber(z)}" rgba="0.22 0.28 0.31 1"/>\n    </body>`;
     }
     return `${header}\n      <geom name="${body}_geom" type="box" size="${xmlNumber(obstacle.width / 2)} ${xmlNumber(obstacle.depth / 2)} ${xmlNumber(z)}" rgba="0.25 0.31 0.34 1"/>\n    </body>`;
   }).join("\n");
@@ -364,9 +365,9 @@ export default function Home() {
         <div className="subheading"><div><small>02 / DIMENSIONS</small><h3>设置尺寸</h3></div><span>单位：米</span></div>
         <div className="field-grid">
           {shape === "cylinder" ? <NumberField label="半径" value={draft.radius} min={0.05} onChange={(value) => setDraft({ ...draft, radius: value })} /> : <>
-            <NumberField label={shape === "wall" ? "长度" : "宽度"} value={draft.width} min={0.05} onChange={(value) => setDraft({ ...draft, width: value })} />
-            <NumberField label={shape === "wall" ? "厚度" : "深度"} value={shape === "wall" ? draft.depth : draft.depth} min={0.05} onChange={(value) => setDraft({ ...draft, depth: value, ...(shape === "wall" ? { thickness: value } : {}) })} />
-            {shape === "l_shape" && <NumberField label="臂厚" value={draft.thickness} min={0.05} max={Math.min(draft.width, draft.depth)} onChange={(value) => setDraft({ ...draft, thickness: value })} />}
+            <NumberField label={shape === "wall" ? "长度" : "宽度"} value={draft.width} min={0.05} onChange={(value) => setDraft({ ...draft, width: value, ...(shape === "l_shape" ? { thickness: Math.max(0.05, Math.min(draft.thickness, value, draft.depth)) } : {}) })} />
+            <NumberField label={shape === "wall" ? "厚度" : "深度"} value={shape === "wall" ? draft.depth : draft.depth} min={0.05} onChange={(value) => setDraft({ ...draft, depth: value, ...(shape === "wall" ? { thickness: value } : {}), ...(shape === "l_shape" ? { thickness: Math.max(0.05, Math.min(draft.thickness, draft.width, value)) } : {}) })} />
+            {shape === "l_shape" && <NumberField label="臂厚" value={draft.thickness} min={0.05} max={Math.min(draft.width, draft.depth)} onChange={(value) => setDraft({ ...draft, thickness: Math.max(0.05, Math.min(value, draft.width, draft.depth)) })} />}
           </>}
           <NumberField label="高度" value={draft.height} min={0.05} onChange={(value) => setDraft({ ...draft, height: value })} />
         </div>
@@ -391,6 +392,7 @@ export default function Home() {
           <div className="origin-label">0, 0</div>
           {obstacles.map((item) => {
             const size = footprint(item);
+            const lThickness = Math.max(0.05, Math.min(item.thickness, item.width, item.depth));
             return <button
               type="button"
               data-obstacle
@@ -402,7 +404,7 @@ export default function Home() {
               onPointerMove={obstaclePointerMove}
               onPointerUp={obstaclePointerUp}
               onPointerCancel={obstaclePointerUp}
-            ><span className="obstacle-label" style={{ transform: `rotate(${item.angle}deg)` }}>{selectedId === item.id ? item.name : ""}</span>{item.shape === "l_shape" && <><i className="l-horizontal" /><i className="l-vertical" /></>}</button>;
+            ><span className="obstacle-label" style={{ transform: `rotate(${item.angle}deg)` }}>{selectedId === item.id ? item.name : ""}</span>{item.shape === "l_shape" && <><i className="l-horizontal" style={{ height: `${lThickness / item.depth * 100}%` }} /><i className="l-vertical" style={{ width: `${lThickness / item.width * 100}%` }} /></>}</button>;
           })}
           <div className="target-marker" style={{ left: `${(target.x / mapWidth + 0.5) * 100}%`, top: `${(0.5 - target.y / mapHeight) * 100}%`, transform: `translate(-50%, -50%) rotate(${-target.yaw}deg)` }}><i /><span>目标</span></div>
           <div className="tracker-marker" style={{ left: `${(tracker.x / mapWidth + 0.5) * 100}%`, top: `${(0.5 - tracker.y / mapHeight) * 100}%`, transform: `translate(-50%, -50%) rotate(${-tracker.yaw}deg)` }}><i>NT</i><span>tracker</span></div>
@@ -422,9 +424,9 @@ export default function Home() {
           <label className="angle-control inspector-angle"><input aria-label="旋转角度滑杆" type="range" min="-180" max="180" value={selected.angle} onChange={(event) => updateObstacle(selected.id, { angle: Number(event.target.value) })} /><span className="ticks"><i>−180°</i><i>0°</i><i>180°</i></span></label>
           <div className="subheading compact"><div><small>GEOMETRY</small><h3>几何尺寸</h3></div></div>
           <div className="field-grid">
-            {selected.shape === "cylinder" ? <NumberField label="半径" value={selected.radius} min={0.05} onChange={(value) => updateObstacle(selected.id, { radius: value })} /> : <><NumberField label="宽度" value={selected.width} min={0.05} onChange={(value) => updateObstacle(selected.id, { width: value })} /><NumberField label="深度" value={selected.depth} min={0.05} onChange={(value) => updateObstacle(selected.id, { depth: value })} /></>}
+            {selected.shape === "cylinder" ? <NumberField label="半径" value={selected.radius} min={0.05} onChange={(value) => updateObstacle(selected.id, { radius: value })} /> : <><NumberField label="宽度" value={selected.width} min={0.05} onChange={(value) => updateObstacle(selected.id, { width: value, ...(selected.shape === "l_shape" ? { thickness: Math.max(0.05, Math.min(selected.thickness, value, selected.depth)) } : {}) })} /><NumberField label="深度" value={selected.depth} min={0.05} onChange={(value) => updateObstacle(selected.id, { depth: value, ...(selected.shape === "l_shape" ? { thickness: Math.max(0.05, Math.min(selected.thickness, selected.width, value)) } : {}) })} /></>}
             <NumberField label="高度" value={selected.height} min={0.05} onChange={(value) => updateObstacle(selected.id, { height: value })} />
-            {selected.shape === "l_shape" && <NumberField label="臂厚" value={selected.thickness} min={0.05} onChange={(value) => updateObstacle(selected.id, { thickness: value })} />}
+            {selected.shape === "l_shape" && <NumberField label="臂厚" value={selected.thickness} min={0.05} max={Math.min(selected.width, selected.depth)} onChange={(value) => updateObstacle(selected.id, { thickness: Math.max(0.05, Math.min(value, selected.width, selected.depth)) })} />}
           </div>
           <div className="inspector-actions"><button onClick={() => { const copy = { ...selected, id: uid(), name: `${selected.name} 副本`, x: rounded(selected.x + 0.5), y: rounded(selected.y - 0.5) }; commit([...obstacles, copy]); setSelectedId(copy.id); }}>⧉ 复制</button><button className="danger" onClick={removeSelected}>⌫ 删除</button></div>
         </div> : <div className="empty-inspector"><span>↖</span><b>未选择障碍物</b><p>点击画布中的障碍物，在此精确调整位置、角度与尺寸。</p></div>}
