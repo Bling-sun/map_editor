@@ -9,12 +9,21 @@ type Props = {
   boundary: { enabled: boolean; thickness: number; height: number };
   obstacles: Obstacle[];
   selectedId: string | null;
+  snapGrid: number | null;
   tracker: { x: number; y: number; yaw: number };
   target: { x: number; y: number; yaw: number };
+  onSelect: (id: string) => void;
+  onDragStart: (id: string) => void;
+  onDrag: (id: string, x: number, y: number) => void;
+  onDragEnd: (id: string, moved: boolean) => void;
 };
 
 type Point3 = { x: number; y: number; z: number };
 type Face = { points: Point3[]; color: string; depth: number };
+type HitArea = { id: string; x: number; y: number; radius: number };
+type DragState =
+  | { mode: "rotate"; pointerId: number; startX: number; startYaw: number }
+  | { mode: "obstacle"; pointerId: number; id: string; startX: number; startY: number; originX: number; originY: number; moved: boolean };
 
 const palette = {
   top: "#74877b", side: "#43534b", dark: "#2f3c36", selected: "#2563eb",
@@ -28,7 +37,9 @@ function rotate(x: number, y: number, angle: number) {
 
 export default function ThreePreview(props: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const dragRef = useRef<{ id: number; x: number; yaw: number } | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const hitAreasRef = useRef<HitArea[]>([]);
+  const transformRef = useRef({ scale: 1, pitch: .58, yaw: 0 });
   const [yaw, setYaw] = useState(-42);
   const [zoom, setZoom] = useState(1);
 
@@ -50,6 +61,7 @@ export default function ThreePreview(props: Props) {
     const yawRad = yaw * Math.PI / 180;
     const pitch = 0.58;
     const baseScale = Math.min(cw / (props.width * 1.35), ch / (props.height * 0.78)) * zoom;
+    transformRef.current = { scale: baseScale, pitch, yaw: yawRad };
     const project = (point: Point3) => {
       const p = rotate(point.x, point.y, yawRad);
       return { x: cw / 2 + p.x * baseScale, y: ch * 0.58 + (p.y * pitch - point.z) * baseScale };
@@ -123,16 +135,75 @@ export default function ThreePreview(props: Props) {
     });
     faces.sort((a,b)=>a.depth-b.depth).forEach(face=>polygon(face.points,face.color));
 
+    hitAreasRef.current = props.obstacles.map(item => {
+      const center = project({ x: item.x, y: item.y, z: Math.min(item.height * .55, 1.2) });
+      const footprintRadius = item.shape === "cylinder" ? item.radius
+        : item.shape === "tree" ? item.crownRadius
+        : Math.hypot(item.width, item.depth) / 2;
+      return { id: item.id, x: center.x, y: center.y, radius: Math.max(13, Math.min(46, footprintRadius * baseScale + item.height * baseScale * .35)) };
+    });
+
     const mark=(x:number,y:number,color:string,label:string)=>{const p=project({x,y,z:.08});ctx.beginPath();ctx.arc(p.x,p.y,4,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();ctx.fillStyle="#25312b";ctx.font="700 9px Arial";ctx.fillText(label,p.x+7,p.y+3);};
     mark(props.tracker.x,props.tracker.y,"#1777d2","tracker"); mark(props.target.x,props.target.y,"#ff8e44","target");
   }, [props, yaw, zoom]);
 
-  const pointerDown=(event:PointerEvent<HTMLCanvasElement>)=>{event.currentTarget.setPointerCapture(event.pointerId);dragRef.current={id:event.pointerId,x:event.clientX,yaw};};
-  const pointerMove=(event:PointerEvent<HTMLCanvasElement>)=>{const d=dragRef.current;if(d?.id===event.pointerId)setYaw(d.yaw+(event.clientX-d.x)*.45);};
-  const pointerUp=(event:PointerEvent<HTMLCanvasElement>)=>{if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);dragRef.current=null;};
+  const pointerDown = (event: PointerEvent<HTMLCanvasElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = event.clientX - rect.left, y = event.clientY - rect.top;
+    const hits = hitAreasRef.current
+      .map(area => ({ area, distance: Math.hypot(x - area.x, y - area.y) }))
+      .filter(hit => hit.distance <= hit.area.radius)
+      .sort((a, b) => {
+        if (a.area.id === props.selectedId) return -1;
+        if (b.area.id === props.selectedId) return 1;
+        return a.distance - b.distance;
+      });
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const hit = hits[0]?.area;
+    if (hit) {
+      const obstacle = props.obstacles.find(item => item.id === hit.id);
+      if (!obstacle) return;
+      props.onSelect(hit.id);
+      props.onDragStart(hit.id);
+      dragRef.current = { mode: "obstacle", pointerId: event.pointerId, id: hit.id, startX: event.clientX, startY: event.clientY, originX: obstacle.x, originY: obstacle.y, moved: false };
+      return;
+    }
+    dragRef.current = { mode: "rotate", pointerId: event.pointerId, startX: event.clientX, startYaw: yaw };
+  };
+
+  const pointerMove = (event: PointerEvent<HTMLCanvasElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.mode === "rotate") {
+      setYaw(drag.startYaw + (event.clientX - drag.startX) * .45);
+      return;
+    }
+    const screenDistance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+    if (!drag.moved && screenDistance < 2) return;
+    drag.moved = true;
+    const transform = transformRef.current;
+    const rotatedDeltaX = (event.clientX - drag.startX) / transform.scale;
+    const rotatedDeltaY = (event.clientY - drag.startY) / (transform.scale * transform.pitch);
+    const worldDelta = rotate(rotatedDeltaX, rotatedDeltaY, -transform.yaw);
+    let x = Math.max(-props.width / 2, Math.min(props.width / 2, drag.originX + worldDelta.x));
+    let y = Math.max(-props.height / 2, Math.min(props.height / 2, drag.originY + worldDelta.y));
+    if (props.snapGrid) {
+      x = Math.round(x / props.snapGrid) * props.snapGrid;
+      y = Math.round(y / props.snapGrid) * props.snapGrid;
+    }
+    props.onDrag(drag.id, Math.round(x * 1000) / 1000, Math.round(y * 1000) / 1000);
+  };
+
+  const pointerUp = (event: PointerEvent<HTMLCanvasElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (drag.mode === "obstacle") props.onDragEnd(drag.id, drag.moved);
+    dragRef.current = null;
+  };
 
   return <div className="preview3d-wrap">
-    <canvas ref={canvasRef} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} aria-label="地图三维预览，左右拖动旋转视角" />
-    <div className="preview3d-controls"><span>拖动画布旋转</span><button onClick={()=>setYaw(-42)}>重置视角</button><label>缩放 <input aria-label="3D 预览缩放" type="range" min="0.65" max="2.2" step="0.05" value={zoom} onChange={e=>setZoom(Number(e.target.value))}/></label></div>
+    <canvas ref={canvasRef} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} aria-label="地图三维编辑预览，拖动障碍物移动，拖动空白区域旋转视角" />
+    <div className="preview3d-controls"><span>拖动模型移动 · 拖动空白旋转</span><button onClick={()=>setYaw(-42)}>重置视角</button><label>缩放 <input aria-label="3D 预览缩放" type="range" min="0.65" max="2.2" step="0.05" value={zoom} onChange={e=>setZoom(Number(e.target.value))}/></label></div>
   </div>;
 }

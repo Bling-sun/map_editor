@@ -212,6 +212,7 @@ export default function Home() {
   const fileInput = useRef<HTMLInputElement>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
+  const previewDragBeforeRef = useRef<Obstacle[] | null>(null);
 
   const selected = obstacles.find((item) => item.id === selectedId) ?? null;
   const mapFile = useMemo<MapFile>(() => ({ format: "neural-tracker-map", version: 1, name: mapName, map: { width: mapWidth, height: mapHeight, resolution }, boundary, tracker, target, obstacles }), [mapName, mapWidth, mapHeight, resolution, boundary, tracker, target, obstacles]);
@@ -305,6 +306,24 @@ export default function Home() {
       announce("障碍物位置已更新");
     }
     dragRef.current = null;
+  };
+
+  const previewDragStart = () => {
+    previewDragBeforeRef.current = obstacles;
+  };
+
+  const previewDrag = (id: string, x: number, y: number) => {
+    setObstacles((current) => current.map((obstacle) => obstacle.id === id ? { ...obstacle, x, y } : obstacle));
+  };
+
+  const previewDragEnd = (_id: string, moved: boolean) => {
+    const before = previewDragBeforeRef.current;
+    if (moved && before) {
+      setUndoStack((stack) => [...stack.slice(-29), before]);
+      setRedoStack([]);
+      announce("3D 视图中的障碍物位置已更新");
+    }
+    previewDragBeforeRef.current = null;
   };
 
   const undo = useCallback(() => {
@@ -429,7 +448,7 @@ export default function Home() {
           <div className="view-switch"><button className={viewMode === "2d" ? "active" : ""} onClick={() => setViewMode("2d")}>2D 编辑</button><button className={viewMode === "3d" ? "active" : ""} onClick={() => { setViewMode("3d"); setPlacing(false); }}>3D 预览</button></div>
           <label className="snap-control"><input type="checkbox" checked={snap} onChange={(event) => setSnap(event.target.checked)} /> 网格吸附 <kbd>{Math.max(resolution, 0.25)} m</kbd></label>
         </div>
-        {viewMode === "3d" ? <ThreePreview width={mapWidth} height={mapHeight} boundary={boundary} obstacles={obstacles} selectedId={selectedId} tracker={tracker} target={target} /> : <div ref={mapRef} className={`map-wrap ${placing ? "placing" : ""}`} style={{ aspectRatio: `${mapWidth} / ${mapHeight}` }} onPointerDown={mapPointerDown}>
+        {viewMode === "3d" ? <ThreePreview width={mapWidth} height={mapHeight} boundary={boundary} obstacles={obstacles} selectedId={selectedId} snapGrid={snap ? Math.max(resolution, .25) : null} tracker={tracker} target={target} onSelect={setSelectedId} onDragStart={previewDragStart} onDrag={previewDrag} onDragEnd={previewDragEnd} /> : <div ref={mapRef} className={`map-wrap ${placing ? "placing" : ""}`} style={{ aspectRatio: `${mapWidth} / ${mapHeight}` }} onPointerDown={mapPointerDown}>
           {boundary.enabled && <div className="boundary-walls" aria-label={`neural_tracker 外墙，厚 ${boundary.thickness} 米`}>
             <i className="boundary-wall boundary-top" style={{ height: `${boundary.thickness / mapHeight * 100}%` }} />
             <i className="boundary-wall boundary-bottom" style={{ height: `${boundary.thickness / mapHeight * 100}%` }} />
