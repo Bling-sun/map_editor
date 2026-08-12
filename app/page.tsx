@@ -23,6 +23,7 @@ type MapFile = {
   version: 1;
   name: string;
   map: { width: number; height: number; resolution: number };
+  boundary: { enabled: boolean; thickness: number; height: number };
   tracker: { x: number; y: number; yaw: number };
   target: { x: number; y: number; yaw: number };
   obstacles: Obstacle[];
@@ -51,6 +52,7 @@ const STARTER_OBSTACLES: Obstacle[] = [
 
 const TRACKER_START = { x: -9.5, y: 0, yaw: 0 };
 const TARGET_START = { x: -7, y: 0, yaw: 0 };
+const DEFAULT_BOUNDARY = { enabled: true, thickness: 0.15, height: 1.5 };
 
 type DragState = {
   id: string;
@@ -90,6 +92,29 @@ function targetXml(target: MapFile["target"]) {
     </body>`;
 }
 
+function boundaryXml(file: MapFile) {
+  if (!file.boundary.enabled) return "";
+  const { thickness, height } = file.boundary;
+  const halfThickness = thickness / 2;
+  const halfHeight = height / 2;
+  const horizontalY = file.map.height / 2 - halfThickness;
+  const verticalX = file.map.width / 2 - halfThickness;
+  const rgba = "0.17 0.21 0.23 1";
+  return `    <!-- neural_tracker closed boundary: tracker.radius = ${xmlNumber(thickness)} m -->
+    <body name="map_boundary_top" pos="0 ${xmlNumber(horizontalY)} ${xmlNumber(halfHeight)}">
+      <geom name="map_boundary_top_geom" type="box" size="${xmlNumber(file.map.width / 2)} ${xmlNumber(halfThickness)} ${xmlNumber(halfHeight)}" rgba="${rgba}"/>
+    </body>
+    <body name="map_boundary_bottom" pos="0 ${xmlNumber(-horizontalY)} ${xmlNumber(halfHeight)}">
+      <geom name="map_boundary_bottom_geom" type="box" size="${xmlNumber(file.map.width / 2)} ${xmlNumber(halfThickness)} ${xmlNumber(halfHeight)}" rgba="${rgba}"/>
+    </body>
+    <body name="map_boundary_left" pos="${xmlNumber(-verticalX)} 0 ${xmlNumber(halfHeight)}">
+      <geom name="map_boundary_left_geom" type="box" size="${xmlNumber(halfThickness)} ${xmlNumber(file.map.height / 2)} ${xmlNumber(halfHeight)}" rgba="${rgba}"/>
+    </body>
+    <body name="map_boundary_right" pos="${xmlNumber(verticalX)} 0 ${xmlNumber(halfHeight)}">
+      <geom name="map_boundary_right_geom" type="box" size="${xmlNumber(halfThickness)} ${xmlNumber(file.map.height / 2)} ${xmlNumber(halfHeight)}" rgba="${rgba}"/>
+    </body>`;
+}
+
 function toMujoco(file: MapFile) {
   const geoms = file.obstacles.map((obstacle, index) => {
     const body = `obstacle_${String(index).padStart(3, "0")}`;
@@ -113,6 +138,7 @@ function toMujoco(file: MapFile) {
     <geom contype="2" conaffinity="1" friction="0.8 0.01 0.001" solref="0.002 1" solimp="0.95 0.99 0.01 0.5 2"/>
   </default>
   <worldbody>
+${boundaryXml(file)}
 ${geoms}
 ${targetXml(file.target)}
   </worldbody>
@@ -129,6 +155,7 @@ export default function Home() {
   const [mapWidth, setMapWidth] = useState(80);
   const [mapHeight, setMapHeight] = useState(80);
   const [resolution, setResolution] = useState(0.05);
+  const [boundary, setBoundary] = useState(DEFAULT_BOUNDARY);
   const [shape, setShape] = useState<Shape>("wall");
   const [draft, setDraft] = useState(PRESETS.wall);
   const [obstacles, setObstacles] = useState<Obstacle[]>(STARTER_OBSTACLES);
@@ -145,7 +172,7 @@ export default function Home() {
   const dragRef = useRef<DragState | null>(null);
 
   const selected = obstacles.find((item) => item.id === selectedId) ?? null;
-  const mapFile = useMemo<MapFile>(() => ({ format: "neural-tracker-map", version: 1, name: mapName, map: { width: mapWidth, height: mapHeight, resolution }, tracker, target, obstacles }), [mapName, mapWidth, mapHeight, resolution, tracker, target, obstacles]);
+  const mapFile = useMemo<MapFile>(() => ({ format: "neural-tracker-map", version: 1, name: mapName, map: { width: mapWidth, height: mapHeight, resolution }, boundary, tracker, target, obstacles }), [mapName, mapWidth, mapHeight, resolution, boundary, tracker, target, obstacles]);
 
   const announce = useCallback((message: string) => {
     setToast(message);
@@ -298,6 +325,7 @@ export default function Home() {
       setMapWidth(parsed.map.width);
       setMapHeight(parsed.map.height);
       setResolution(parsed.map.resolution);
+      setBoundary(parsed.boundary ?? DEFAULT_BOUNDARY);
       setTracker(parsed.tracker ?? TRACKER_START);
       setTarget(parsed.target ?? TARGET_START);
       setObstacles(parsed.obstacles);
@@ -353,6 +381,12 @@ export default function Home() {
           <label className="snap-control"><input type="checkbox" checked={snap} onChange={(event) => setSnap(event.target.checked)} /> 网格吸附 <kbd>{Math.max(resolution, 0.25)} m</kbd></label>
         </div>
         <div ref={mapRef} className={`map-wrap ${placing ? "placing" : ""}`} style={{ aspectRatio: `${mapWidth} / ${mapHeight}` }} onPointerDown={mapPointerDown}>
+          {boundary.enabled && <div className="boundary-walls" aria-label={`neural_tracker 外墙，厚 ${boundary.thickness} 米`}>
+            <i className="boundary-wall boundary-top" style={{ height: `${boundary.thickness / mapHeight * 100}%` }} />
+            <i className="boundary-wall boundary-bottom" style={{ height: `${boundary.thickness / mapHeight * 100}%` }} />
+            <i className="boundary-wall boundary-left" style={{ width: `${boundary.thickness / mapWidth * 100}%` }} />
+            <i className="boundary-wall boundary-right" style={{ width: `${boundary.thickness / mapWidth * 100}%` }} />
+          </div>}
           <div className="axis axis-y"><span>+Y</span><i /></div><div className="axis axis-x"><span>+X</span><i /></div>
           <div className="origin-label">0, 0</div>
           {obstacles.map((item) => {
@@ -374,7 +408,7 @@ export default function Home() {
           <div className="tracker-marker" style={{ left: `${(tracker.x / mapWidth + 0.5) * 100}%`, top: `${(0.5 - tracker.y / mapHeight) * 100}%`, transform: `translate(-50%, -50%) rotate(${-tracker.yaw}deg)` }}><i>NT</i><span>tracker</span></div>
           <span className="scale-label scale-left">−{mapWidth / 2}m</span><span className="scale-label scale-right">+{mapWidth / 2}m</span>
         </div>
-        <div className="canvas-footer"><span><i className="legend obstacle-dot" /> 障碍物</span><span><i className="legend target-dot" /> 目标</span><span><i className="legend tracker-dot" /> G1 起点</span><strong>{obstacles.length} 个障碍物 · {mapWidth * mapHeight} m²</strong></div>
+        <div className="canvas-footer"><span><i className="legend boundary-dot" /> 外墙</span><span><i className="legend obstacle-dot" /> 障碍物</span><span><i className="legend target-dot" /> 目标</span><span><i className="legend tracker-dot" /> tracker</span><strong>{obstacles.length} 个内部障碍物 · {mapWidth * mapHeight} m²</strong></div>
       </section>
 
       <aside className="right-panel panel">
@@ -398,6 +432,7 @@ export default function Home() {
         <div className="map-settings">
           <div className="subheading compact"><div><small>MAP SETTINGS</small><h3>地图参数</h3></div></div>
           <div className="field-grid"><NumberField label="宽度" value={mapWidth} min={5} max={100} step={1} onChange={setMapWidth} /><NumberField label="高度" value={mapHeight} min={5} max={100} step={1} onChange={setMapHeight} /><NumberField label="分辨率" value={resolution} min={0.01} max={1} step={0.01} onChange={setResolution} /></div>
+          <div className="boundary-setting"><span className="pose-dot boundary-dot" /><p><small>NEURAL_TRACKER 外墙</small><b>四边封闭 · 厚 0.15 m · 高 1.50 m</b></p><em>锁定</em></div>
           <div className="start-poses">
             <div><span className="pose-dot tracker-dot" /><p><small>TRACKER 起点</small><b>−9.5, 0.0, 0°</b></p></div>
             <div><span className="pose-dot target-dot" /><p><small>TARGET 起点</small><b>−7.0, 0.0, 0°</b></p></div>

@@ -5,6 +5,10 @@
 `src/simulator/config/simulator.yaml` 一致：tracker 为 `(-9.5, 0, 0°)`，
 target 为 `(-7.0, 0, 0°)`。
 
+默认地图四边包含与 `neural_tracker` 相同的锁定外墙：墙厚等于
+`tracker.radius = 0.15 m`，在 `0.05 m` 分辨率下占 3 个栅格；导出时墙高为
+`1.50 m`。外墙随地图尺寸自动贴边，不计入可拖动的内部障碍物。
+
 ## 本地运行
 
 ```bash
