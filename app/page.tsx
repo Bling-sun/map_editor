@@ -1,0 +1,333 @@
+"use client";
+
+import { ChangeEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+type Shape = "box" | "wall" | "cylinder" | "l_shape";
+
+type Obstacle = {
+  id: string;
+  name: string;
+  shape: Shape;
+  x: number;
+  y: number;
+  angle: number;
+  width: number;
+  depth: number;
+  height: number;
+  thickness: number;
+  radius: number;
+};
+
+type MapFile = {
+  format: "neural-tracker-map";
+  version: 1;
+  name: string;
+  map: { width: number; height: number; resolution: number };
+  target: { x: number; y: number; yaw: number };
+  obstacles: Obstacle[];
+};
+
+const SHAPES: { id: Shape; title: string; hint: string; glyph: string }[] = [
+  { id: "box", title: "矩形", hint: "箱体 / 建筑", glyph: "▰" },
+  { id: "wall", title: "墙体", hint: "长墙 / 隔断", glyph: "▬" },
+  { id: "cylinder", title: "圆柱", hint: "树干 / 柱体", glyph: "●" },
+  { id: "l_shape", title: "L 型", hint: "转角 / 围挡", glyph: "┗" },
+];
+
+const PRESETS: Record<Shape, Omit<Obstacle, "id" | "name" | "shape" | "x" | "y">> = {
+  box: { width: 1.2, depth: 1.2, height: 1.5, thickness: 0.3, radius: 0.6, angle: 0 },
+  wall: { width: 4, depth: 0.3, height: 1.5, thickness: 0.3, radius: 0.6, angle: 0 },
+  cylinder: { width: 1.2, depth: 1.2, height: 1.5, thickness: 0.3, radius: 0.6, angle: 0 },
+  l_shape: { width: 3, depth: 3, height: 1.5, thickness: 0.3, radius: 0.6, angle: 0 },
+};
+
+const STARTER_OBSTACLES: Obstacle[] = [
+  { id: "wall-a", name: "入口墙", shape: "wall", x: -4.6, y: 3.1, width: 4.2, depth: 0.35, height: 1.5, thickness: 0.35, radius: 0.6, angle: 0 },
+  { id: "corner-a", name: "转角围挡", shape: "l_shape", x: 4.8, y: 2.5, width: 3.4, depth: 3.4, height: 1.5, thickness: 0.35, radius: 0.6, angle: 90 },
+  { id: "tree-a", name: "圆柱 01", shape: "cylinder", x: -2.2, y: -3.4, width: 1.2, depth: 1.2, height: 1.8, thickness: 0.3, radius: 0.65, angle: 0 },
+  { id: "box-a", name: "箱体 01", shape: "box", x: 3.6, y: -3.8, width: 1.8, depth: 1.25, height: 1.2, thickness: 0.3, radius: 0.6, angle: -18 },
+];
+
+const uid = () => `obs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+const rounded = (value: number) => Math.round(value * 1000) / 1000;
+const xmlNumber = (value: number) => rounded(value).toString();
+const safeName = (value: string) => value.replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "tracking_map";
+
+function download(name: string, content: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = name;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function targetXml(target: MapFile["target"]) {
+  return `    <body name="target" pos="${xmlNumber(target.x)} ${xmlNumber(target.y)} 0" euler="0 0 ${xmlNumber(target.yaw * Math.PI / 180)}">
+      <geom name="target_left_leg" type="cylinder" pos="0 0.085 0.357" size="0.055 0.357" rgba="0.12 0.22 0.75 1"/>
+      <geom name="target_right_leg" type="cylinder" pos="0 -0.085 0.357" size="0.055 0.357" rgba="0.12 0.22 0.75 1"/>
+      <geom name="target_torso" type="cylinder" pos="0 0 0.952" size="0.162 0.289" rgba="0.85 0.18 0.08 1"/>
+      <geom name="target_left_arm" type="cylinder" pos="0 0.230 0.935" size="0.043 0.319" rgba="0.85 0.18 0.08 1"/>
+      <geom name="target_right_arm" type="cylinder" pos="0 -0.230 0.935" size="0.043 0.319" rgba="0.85 0.18 0.08 1"/>
+      <geom name="target_head" type="sphere" pos="0 0 1.428" size="0.119" rgba="0.95 0.68 0.45 1"/>
+    </body>`;
+}
+
+function toMujoco(file: MapFile) {
+  const geoms = file.obstacles.map((obstacle, index) => {
+    const body = `obstacle_${String(index).padStart(3, "0")}`;
+    const z = obstacle.height / 2;
+    const angle = obstacle.angle * Math.PI / 180;
+    const header = `    <body name="${body}" pos="${xmlNumber(obstacle.x)} ${xmlNumber(obstacle.y)} ${xmlNumber(z)}" euler="0 0 ${xmlNumber(angle)}">`;
+    if (obstacle.shape === "cylinder") {
+      return `${header}\n      <geom name="${body}_geom" type="cylinder" size="${xmlNumber(obstacle.radius)} ${xmlNumber(z)}" rgba="0.27 0.34 0.32 1"/>\n    </body>`;
+    }
+    if (obstacle.shape === "l_shape") {
+      const horizontalY = -(obstacle.depth - obstacle.thickness) / 2;
+      const verticalX = -(obstacle.width - obstacle.thickness) / 2;
+      return `${header}\n      <geom name="${body}_horizontal" type="box" pos="0 ${xmlNumber(horizontalY)} 0" size="${xmlNumber(obstacle.width / 2)} ${xmlNumber(obstacle.thickness / 2)} ${xmlNumber(z)}" rgba="0.22 0.28 0.31 1"/>\n      <geom name="${body}_vertical" type="box" pos="${xmlNumber(verticalX)} 0 0" size="${xmlNumber(obstacle.thickness / 2)} ${xmlNumber(obstacle.depth / 2)} ${xmlNumber(z)}" rgba="0.22 0.28 0.31 1"/>\n    </body>`;
+    }
+    return `${header}\n      <geom name="${body}_geom" type="box" size="${xmlNumber(obstacle.width / 2)} ${xmlNumber(obstacle.depth / 2)} ${xmlNumber(z)}" rgba="0.25 0.31 0.34 1"/>\n    </body>`;
+  }).join("\n");
+
+  return `<!-- Generated by Neural Tracker Map Studio. Units: metres, angles: radians. -->
+<mujoco model="${safeName(file.name)}">
+  <default>
+    <geom contype="2" conaffinity="1" friction="0.8 0.01 0.001" solref="0.002 1" solimp="0.95 0.99 0.01 0.5 2"/>
+  </default>
+  <worldbody>
+${geoms}
+${targetXml(file.target)}
+  </worldbody>
+</mujoco>
+`;
+}
+
+function NumberField({ label, value, min, max, step = 0.1, suffix = "m", onChange }: { label: string; value: number; min?: number; max?: number; step?: number; suffix?: string; onChange: (value: number) => void }) {
+  return <label className="number-field"><span>{label}</span><div><input aria-label={label} type="number" value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} /><em>{suffix}</em></div></label>;
+}
+
+export default function Home() {
+  const [mapName, setMapName] = useState("g1_custom_test");
+  const [mapWidth, setMapWidth] = useState(20);
+  const [mapHeight, setMapHeight] = useState(20);
+  const [resolution, setResolution] = useState(0.05);
+  const [shape, setShape] = useState<Shape>("wall");
+  const [draft, setDraft] = useState(PRESETS.wall);
+  const [obstacles, setObstacles] = useState<Obstacle[]>(STARTER_OBSTACLES);
+  const [selectedId, setSelectedId] = useState<string | null>(STARTER_OBSTACLES[1].id);
+  const [snap, setSnap] = useState(true);
+  const [placing, setPlacing] = useState(true);
+  const [target, setTarget] = useState({ x: 3, y: 0, yaw: 0 });
+  const [toast, setToast] = useState("");
+  const [undoStack, setUndoStack] = useState<Obstacle[][]>([]);
+  const [redoStack, setRedoStack] = useState<Obstacle[][]>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const selected = obstacles.find((item) => item.id === selectedId) ?? null;
+  const mapFile = useMemo<MapFile>(() => ({ format: "neural-tracker-map", version: 1, name: mapName, map: { width: mapWidth, height: mapHeight, resolution }, target, obstacles }), [mapName, mapWidth, mapHeight, resolution, target, obstacles]);
+
+  const announce = useCallback((message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2400);
+  }, []);
+
+  const commit = useCallback((next: Obstacle[]) => {
+    setUndoStack((stack) => [...stack.slice(-29), obstacles]);
+    setRedoStack([]);
+    setObstacles(next);
+  }, [obstacles]);
+
+  const updateObstacle = (id: string, patch: Partial<Obstacle>) => {
+    commit(obstacles.map((item) => item.id === id ? { ...item, ...patch } : item));
+  };
+
+  const selectShape = (next: Shape) => {
+    setShape(next);
+    setDraft(PRESETS[next]);
+    setPlacing(true);
+    setSelectedId(null);
+  };
+
+  const mapPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (!placing || (event.target as HTMLElement).closest("[data-obstacle]")) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    let x = ((event.clientX - rect.left) / rect.width - 0.5) * mapWidth;
+    let y = (0.5 - (event.clientY - rect.top) / rect.height) * mapHeight;
+    if (snap) {
+      const grid = Math.max(resolution, 0.25);
+      x = Math.round(x / grid) * grid;
+      y = Math.round(y / grid) * grid;
+    }
+    const count = obstacles.filter((item) => item.shape === shape).length + 1;
+    const item: Obstacle = { id: uid(), name: `${SHAPES.find((item) => item.id === shape)?.title} ${String(count).padStart(2, "0")}`, shape, x: rounded(x), y: rounded(y), ...draft };
+    commit([...obstacles, item]);
+    setSelectedId(item.id);
+    setPlacing(false);
+    announce(`已放置：${item.name}`);
+  };
+
+  const undo = useCallback(() => {
+    const previous = undoStack.at(-1);
+    if (!previous) return;
+    setRedoStack((stack) => [...stack, obstacles]);
+    setObstacles(previous);
+    setUndoStack((stack) => stack.slice(0, -1));
+    setSelectedId(null);
+  }, [undoStack, obstacles]);
+
+  const redo = useCallback(() => {
+    const next = redoStack.at(-1);
+    if (!next) return;
+    setUndoStack((stack) => [...stack, obstacles]);
+    setObstacles(next);
+    setRedoStack((stack) => stack.slice(0, -1));
+    setSelectedId(null);
+  }, [redoStack, obstacles]);
+
+  const removeSelected = useCallback(() => {
+    if (!selectedId) return;
+    commit(obstacles.filter((item) => item.id !== selectedId));
+    setSelectedId(null);
+    announce("障碍物已删除");
+  }, [selectedId, obstacles, commit, announce]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.target as HTMLElement)?.matches("input, textarea")) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+      }
+      if (event.key === "Delete" || event.key === "Backspace") removeSelected();
+      if (event.key === "Escape") { setPlacing(false); setSelectedId(null); }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [undo, redo, removeSelected]);
+
+  const exportJson = () => {
+    download(`${safeName(mapName)}.json`, JSON.stringify(mapFile, null, 2), "application/json");
+    announce("地图 JSON 已导出");
+  };
+
+  const exportXml = () => {
+    download(`${safeName(mapName)}.xml`, toMujoco(mapFile), "application/xml");
+    announce("MuJoCo XML 已导出");
+  };
+
+  const importJson = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text()) as MapFile;
+      if (parsed.format !== "neural-tracker-map" || !Array.isArray(parsed.obstacles)) throw new Error("format");
+      setMapName(parsed.name || "imported_map");
+      setMapWidth(parsed.map.width);
+      setMapHeight(parsed.map.height);
+      setResolution(parsed.map.resolution);
+      setTarget(parsed.target ?? { x: 3, y: 0, yaw: 0 });
+      setObstacles(parsed.obstacles);
+      setSelectedId(null);
+      setUndoStack([]);
+      setRedoStack([]);
+      announce(`已导入 ${parsed.obstacles.length} 个障碍物`);
+    } catch {
+      announce("导入失败：不是有效的 Neural Tracker 地图");
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const footprint = (item: Obstacle) => item.shape === "cylinder" ? { width: item.radius * 2, depth: item.radius * 2 } : { width: item.width, depth: item.depth };
+
+  return <main className="app-shell">
+    <header className="topbar">
+      <div className="brand"><span className="brand-mark">N</span><div><b>Neural Tracker</b><small>MAP STUDIO</small></div></div>
+      <div className="map-title"><span className="status-dot" /> <input aria-label="地图名称" value={mapName} onChange={(event) => setMapName(event.target.value)} /><span className="saved">本地编辑</span></div>
+      <div className="header-actions">
+        <button className="ghost-button" onClick={() => fileInput.current?.click()}>↥ 导入 JSON</button>
+        <input ref={fileInput} hidden type="file" accept="application/json,.json" onChange={importJson} />
+        <button className="ghost-button" onClick={exportJson}>↓ 保存工程</button>
+        <button className="primary-button" onClick={exportXml}>导出 MuJoCo XML <span>↗</span></button>
+      </div>
+    </header>
+
+    <section className="workspace">
+      <aside className="left-panel panel">
+        <div className="panel-heading"><div><small>01 / OBSTACLE</small><h2>选择障碍物</h2></div><span className="step-pill">1</span></div>
+        <div className="shape-grid">
+          {SHAPES.map((item) => <button key={item.id} className={`shape-card ${shape === item.id ? "active" : ""}`} onClick={() => selectShape(item.id)}><span>{item.glyph}</span><b>{item.title}</b><small>{item.hint}</small></button>)}
+        </div>
+
+        <div className="section-divider" />
+        <div className="subheading"><div><small>02 / DIMENSIONS</small><h3>设置尺寸</h3></div><span>单位：米</span></div>
+        <div className="field-grid">
+          {shape === "cylinder" ? <NumberField label="半径" value={draft.radius} min={0.05} onChange={(value) => setDraft({ ...draft, radius: value })} /> : <>
+            <NumberField label={shape === "wall" ? "长度" : "宽度"} value={draft.width} min={0.05} onChange={(value) => setDraft({ ...draft, width: value })} />
+            <NumberField label={shape === "wall" ? "厚度" : "深度"} value={shape === "wall" ? draft.depth : draft.depth} min={0.05} onChange={(value) => setDraft({ ...draft, depth: value, ...(shape === "wall" ? { thickness: value } : {}) })} />
+            {shape === "l_shape" && <NumberField label="臂厚" value={draft.thickness} min={0.05} max={Math.min(draft.width, draft.depth)} onChange={(value) => setDraft({ ...draft, thickness: value })} />}
+          </>}
+          <NumberField label="高度" value={draft.height} min={0.05} onChange={(value) => setDraft({ ...draft, height: value })} />
+        </div>
+        <label className="angle-control"><span><b>放置角度</b><em>{draft.angle}°</em></span><input aria-label="放置角度" type="range" min="-180" max="180" step="1" value={draft.angle} onChange={(event) => setDraft({ ...draft, angle: Number(event.target.value) })} /></label>
+        <button className={`place-button ${placing ? "armed" : ""}`} onClick={() => { setPlacing(true); setSelectedId(null); }}>{placing ? "在画布中点击放置…" : "+ 放置一个障碍物"}</button>
+        <p className="microcopy">放置后可选择障碍物，精确修改坐标与角度。</p>
+      </aside>
+
+      <section className="canvas-column">
+        <div className="canvas-toolbar">
+          <div className="toolbar-group"><button onClick={undo} disabled={!undoStack.length} title="撤销">↶</button><button onClick={redo} disabled={!redoStack.length} title="重做">↷</button><i /><button className={placing ? "active" : ""} onClick={() => setPlacing(!placing)}>⌖ 放置</button><button className={!placing ? "active" : ""} onClick={() => setPlacing(false)}>↖ 选择</button></div>
+          <label className="snap-control"><input type="checkbox" checked={snap} onChange={(event) => setSnap(event.target.checked)} /> 网格吸附 <kbd>{Math.max(resolution, 0.25)} m</kbd></label>
+        </div>
+        <div className={`map-wrap ${placing ? "placing" : ""}`} style={{ aspectRatio: `${mapWidth} / ${mapHeight}` }} onPointerDown={mapPointerDown}>
+          <div className="axis axis-y"><span>+Y</span><i /></div><div className="axis axis-x"><span>+X</span><i /></div>
+          <div className="origin-label">0, 0</div>
+          {obstacles.map((item) => {
+            const size = footprint(item);
+            return <button
+              type="button"
+              data-obstacle
+              aria-label={`${item.name}，点击选择`}
+              key={item.id}
+              className={`obstacle ${item.shape} ${selectedId === item.id ? "selected" : ""}`}
+              style={{ left: `${(item.x / mapWidth + 0.5) * 100}%`, top: `${(0.5 - item.y / mapHeight) * 100}%`, width: `${size.width / mapWidth * 100}%`, height: `${size.depth / mapHeight * 100}%`, transform: `translate(-50%, -50%) rotate(${-item.angle}deg)` }}
+              onPointerDown={(event) => { event.stopPropagation(); setSelectedId(item.id); setPlacing(false); }}
+            ><span className="obstacle-label" style={{ transform: `rotate(${item.angle}deg)` }}>{selectedId === item.id ? item.name : ""}</span>{item.shape === "l_shape" && <><i className="l-horizontal" /><i className="l-vertical" /></>}</button>;
+          })}
+          <div className="target-marker" style={{ left: `${(target.x / mapWidth + 0.5) * 100}%`, top: `${(0.5 - target.y / mapHeight) * 100}%`, transform: `translate(-50%, -50%) rotate(${-target.yaw}deg)` }}><i /><span>目标</span></div>
+          <div className="tracker-marker"><i>G1</i><span>机器人起点</span></div>
+          <span className="scale-label scale-left">−{mapWidth / 2}m</span><span className="scale-label scale-right">+{mapWidth / 2}m</span>
+        </div>
+        <div className="canvas-footer"><span><i className="legend obstacle-dot" /> 障碍物</span><span><i className="legend target-dot" /> 目标</span><span><i className="legend tracker-dot" /> G1 起点</span><strong>{obstacles.length} 个障碍物 · {mapWidth * mapHeight} m²</strong></div>
+      </section>
+
+      <aside className="right-panel panel">
+        <div className="panel-heading"><div><small>03 / PROPERTIES</small><h2>属性检查器</h2></div><span className="step-pill muted">3</span></div>
+        {selected ? <div className="inspector">
+          <label className="name-field"><span>名称</span><input value={selected.name} onChange={(event) => updateObstacle(selected.id, { name: event.target.value })} /></label>
+          <div className="type-chip"><span>{SHAPES.find((item) => item.id === selected.shape)?.glyph}</span><div><small>类型</small><b>{SHAPES.find((item) => item.id === selected.shape)?.title}</b></div></div>
+          <div className="subheading compact"><div><small>TRANSFORM</small><h3>位置与旋转</h3></div></div>
+          <div className="field-grid"><NumberField label="X 坐标" value={selected.x} step={0.05} onChange={(value) => updateObstacle(selected.id, { x: value })} /><NumberField label="Y 坐标" value={selected.y} step={0.05} onChange={(value) => updateObstacle(selected.id, { y: value })} /></div>
+          <NumberField label="旋转角度" value={selected.angle} min={-180} max={180} step={1} suffix="°" onChange={(value) => updateObstacle(selected.id, { angle: value })} />
+          <label className="angle-control inspector-angle"><input aria-label="旋转角度滑杆" type="range" min="-180" max="180" value={selected.angle} onChange={(event) => updateObstacle(selected.id, { angle: Number(event.target.value) })} /><span className="ticks"><i>−180°</i><i>0°</i><i>180°</i></span></label>
+          <div className="subheading compact"><div><small>GEOMETRY</small><h3>几何尺寸</h3></div></div>
+          <div className="field-grid">
+            {selected.shape === "cylinder" ? <NumberField label="半径" value={selected.radius} min={0.05} onChange={(value) => updateObstacle(selected.id, { radius: value })} /> : <><NumberField label="宽度" value={selected.width} min={0.05} onChange={(value) => updateObstacle(selected.id, { width: value })} /><NumberField label="深度" value={selected.depth} min={0.05} onChange={(value) => updateObstacle(selected.id, { depth: value })} /></>}
+            <NumberField label="高度" value={selected.height} min={0.05} onChange={(value) => updateObstacle(selected.id, { height: value })} />
+            {selected.shape === "l_shape" && <NumberField label="臂厚" value={selected.thickness} min={0.05} onChange={(value) => updateObstacle(selected.id, { thickness: value })} />}
+          </div>
+          <div className="inspector-actions"><button onClick={() => { const copy = { ...selected, id: uid(), name: `${selected.name} 副本`, x: rounded(selected.x + 0.5), y: rounded(selected.y - 0.5) }; commit([...obstacles, copy]); setSelectedId(copy.id); }}>⧉ 复制</button><button className="danger" onClick={removeSelected}>⌫ 删除</button></div>
+        </div> : <div className="empty-inspector"><span>↖</span><b>未选择障碍物</b><p>点击画布中的障碍物，在此精确调整位置、角度与尺寸。</p></div>}
+
+        <div className="map-settings">
+          <div className="subheading compact"><div><small>MAP SETTINGS</small><h3>地图参数</h3></div></div>
+          <div className="field-grid"><NumberField label="宽度" value={mapWidth} min={5} max={100} step={1} onChange={setMapWidth} /><NumberField label="高度" value={mapHeight} min={5} max={100} step={1} onChange={setMapHeight} /><NumberField label="分辨率" value={resolution} min={0.01} max={1} step={0.01} onChange={setResolution} /></div>
+        </div>
+      </aside>
+    </section>
+    <div className={`toast ${toast ? "show" : ""}`} role="status">✓ {toast}</div>
+  </main>;
+}
