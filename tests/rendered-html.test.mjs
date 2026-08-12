@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
-import { access, readFile, readdir } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import test from "node:test";
 
-const developmentPreviewMeta =
-  /<meta(?=[^>]*\bname=["']codex-preview["'])(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
-const templateRoot = new URL("../", import.meta.url);
-const previewRoot = new URL("../app/_sites-preview/", import.meta.url);
+const run = promisify(execFile);
+const projectRoot = new URL("../", import.meta.url);
 
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -13,79 +12,39 @@ async function render() {
   const { default: worker } = await import(workerUrl.href);
 
   return worker.fetch(
-    new Request("http://localhost/", {
-      headers: { accept: "text/html" },
-    }),
-    {
-      ASSETS: {
-        fetch: async () => new Response("Not found", { status: 404 }),
-      },
-    },
-    {
-      waitUntil() {},
-      passThroughOnException() {},
-    },
+    new Request("http://localhost/", { headers: { accept: "text/html" } }),
+    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
+    { waitUntil() {}, passThroughOnException() {} },
   );
 }
 
-test("server-renders the starter loading skeleton", async () => {
+test("server-renders the Neural Tracker map editor", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, developmentPreviewMeta);
-  assert.match(html, /<title>Your site is taking shape<\/title>/i);
-  assert.match(html, /Building your site/);
-  assert.match(html, /Your site is taking shape/);
-  assert.match(
-    html,
-    /Your first version will appear here automatically when it’s ready\./,
-  );
-  assert.doesNotMatch(html, /Codex/);
-  assert.match(html, /react-loading-skeleton/);
-  assert.match(html, /role="status"/);
+  assert.match(html, /<title>Neural Tracker Map Studio<\/title>/i);
+  assert.match(html, /⚡ 一键生成/);
+  assert.match(html, /aspect-ratio:80 \/ 80/);
+  assert.match(html, /neural_tracker 外墙/);
+  assert.match(html, /TRACKER 起点/);
+  assert.match(html, /TARGET 起点/);
+  for (const label of ["矩形", "墙体", "圆柱", "L 型", "E 型", "T 型", "H 型", "S 型", "F 型", "棱台", "拱桥", "树状"]) {
+    assert.match(html, new RegExp(`>${label}<`));
+  }
 });
 
-test("keeps the loading skeleton scoped and disposable", async () => {
-  const [preview, css, page, layout, packageJson, files] = await Promise.all([
-    readFile(new URL("SkeletonPreview.tsx", previewRoot), "utf8"),
-    readFile(new URL("preview.css", previewRoot), "utf8"),
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../package.json", import.meta.url), "utf8"),
-    readdir(previewRoot),
-  ]);
-
-  assert.deepEqual(files.sort(), ["SkeletonPreview.tsx", "preview.css"]);
-  assert.match(preview, /from "react-loading-skeleton"/);
-  assert.match(preview, /baseColor="#eceae7"/);
-  assert.match(preview, /highlightColor="#f9f8f6"/);
-  assert.match(preview, /duration=\{2\.8\}/);
-  assert.match(preview, /sites-skeleton-search-placeholder/);
-  assert.match(packageJson, /"react-loading-skeleton": "3\.5\.0"/);
-
-  const shellIndex = preview.indexOf('className="sites-skeleton-shell"');
-  const statusIndex = preview.indexOf('className="sites-skeleton-status"');
-  assert.ok(shellIndex >= 0 && statusIndex > shellIndex);
-  assert.match(css, /position:\s*fixed/);
-  assert.match(css, /inset:\s*0/);
-  assert.match(css, /opacity:\s*0\.52/);
-  assert.match(css, /prefers-reduced-motion:\s*reduce/);
-  assert.doesNotMatch(css, /#020617|canvas|pets|progress/i);
-  assert.doesNotMatch(
-    preview,
-    /loading-spinner|status-mark|status-progress|canvas|cookie|random/i,
-  );
-
-  assert.match(page, /export const metadata:\s*Metadata/);
-  assert.match(page, /"codex-preview": "development"/);
-  assert.match(page, /<SkeletonPreview \/>/);
-  assert.match(layout, /title:\s*"Starter Project"/);
-  assert.doesNotMatch(layout, /codex-preview|_sites-preview|themeColor|\bViewport\b/);
-  assert.doesNotMatch(css, /(^|\s)(html|body)\s*\{/m);
-
-  await assert.rejects(
-    access(new URL("public/_sites-preview", templateRoot)),
-  );
+test("generates and verifies non-overlapping layouts", async () => {
+  const executable = new URL("../node_modules/.bin/tsx", import.meta.url).pathname;
+  const script = `
+    import { DEFAULT_GENERATOR_CONFIG, generateNonOverlappingMap, verifyGeneratedLayout } from "./app/map-generator.ts";
+    const base = { mapWidth: 80, mapHeight: 80, boundaryThickness: 0.15, tracker: { x: -9.5, y: 0 }, target: { x: -7, y: 0 }, spacing: 0.35 };
+    for (let index = 0; index < 50; index += 1) {
+      const result = generateNonOverlappingMap({ ...base, config: DEFAULT_GENERATOR_CONFIG, snapGrid: 0.25 });
+      if (!result.ok || result.obstacles.length !== 28 || !verifyGeneratedLayout(result.obstacles, base)) process.exit(1);
+    }
+  `;
+  const { stderr } = await run(executable, ["-e", script], { cwd: projectRoot.pathname });
+  assert.equal(stderr, "");
 });
