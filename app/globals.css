@@ -80,6 +80,8 @@ input[type="range"] { width: 100%; accent-color: var(--green); }
 .toolbar-group button:hover, .toolbar-group button.active { color: var(--green); background: #fff; box-shadow: 0 1px 5px #29382f12; }
 .toolbar-group .bulk-delete-button { color: #a7443d; background: #fff4f2; }
 .toolbar-group .bulk-delete-button:hover { color: #96352f; background: #ffe9e6; }
+.toolbar-group .bulk-copy-button { color: #2456a5; background: #f3f7ff; }
+.toolbar-group .bulk-copy-button:hover { color: #174689; background: #e8f0ff; }
 .toolbar-group button:disabled { opacity: .25; cursor: default; }
 .toolbar-group i { width: 1px; height: 18px; margin: 0 5px; background: #d3d9d1; }
 .snap-control { display: flex; align-items: center; gap: 7px; color: #657069; font-size: 9px; }
@@ -119,8 +121,13 @@ kbd { padding: 4px 6px; border: 1px solid #d8ddd6; border-bottom-width: 2px; bor
 .arch-leg { position: absolute; top: 0; bottom: 0; display: block; border: 1px solid #33443c; background: #526159; }
 .arch-left { left: 0; }.arch-right { right: 0; }
 .arch-span { position: absolute; left: 0; right: 0; top: 0; height: 28%; display: block; border: 1px solid #33443c; border-radius: 50% 50% 0 0; background: #68766f; }
-.tree-crown { position: absolute; inset: 0; display: block; border: 1px solid #365640; border-radius: 50%; background: #5c8665cc; box-shadow: inset -4px -5px 0 #355d4033; }
-.tree-trunk { position: absolute; left: 50%; top: 50%; display: block; transform: translate(-50%, -50%); border: 1px solid #543923; border-radius: 50%; background: #76553a; }
+.tree-crown { position: absolute; display: block; border: 1px solid #365640; border-radius: 50%; background: #5c8665d9; box-shadow: inset -4px -5px 0 #355d4033; }
+.tree-crown-main { inset: 12% 11% 8%; background: #4f7f59e6; }
+.tree-crown-left { left: 2%; top: 24%; width: 56%; height: 56%; background: #65936de6; }
+.tree-crown-right { right: 2%; top: 12%; width: 54%; height: 54%; background: #568a60e6; }
+.tree-branch { position: absolute; z-index: 1; left: 50%; top: 50%; width: 32%; height: 3%; transform-origin: left center; border-radius: 999px; background: #76553a; }
+.tree-branch-a { transform: rotate(5deg); }.tree-branch-b { transform: rotate(125deg); }.tree-branch-c { transform: rotate(245deg); }
+.tree-trunk { position: absolute; z-index: 2; left: 50%; top: 50%; display: block; transform: translate(-50%, -50%); border: 1px solid #543923; border-radius: 50%; background: #76553a; }
 .obstacle.selected { border-color: var(--blue); box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--blue), 0 7px 14px #1d4ed829; }
 .obstacle.l_shape.selected, .obstacle.e_shape.selected, .obstacle.t_shape.selected, .obstacle.h_shape.selected, .obstacle.s_shape.selected, .obstacle.f_shape.selected, .obstacle.arch.selected, .obstacle.tree.selected { outline: 2px dashed var(--blue); outline-offset: 3px; }
 .obstacle-label { position: absolute; left: 50%; bottom: calc(100% + 8px); width: max-content; max-width: 110px; transform-origin: center; color: #1f4fb9; background: #fff; border: 1px solid #c8d7fa; border-radius: 5px; padding: 3px 6px; font-size: 8px; font-weight: 800; box-shadow: 0 2px 7px #1f29371c; }
@@ -157,6 +164,7 @@ kbd { padding: 4px 6px; border: 1px solid #d8ddd6; border-bottom-width: 2px; bor
 .multi-inspector > p { margin: 7px 0 15px; color: #71809a; font-size: 9px; line-height: 1.55; }
 .multi-inspector > button { height: 36px; margin-top: 7px; border: 1px solid #d5dce8; border-radius: 7px; background: #fff; cursor: pointer; font-size: 9px; font-weight: 800; }
 .multi-inspector > button.danger { color: #ac3f38; border-color: #ebcecb; background: #fff7f6; }
+.multi-inspector > button.copy { color: #2456a5; border-color: #cddaf0; background: #f6f9ff; }
 .map-settings { margin-top: 25px; padding-top: 1px; border-top: 1px solid var(--line); }
 .boundary-setting { display: flex; align-items: center; gap: 9px; min-height: 45px; margin-top: 15px; padding: 7px 10px; border: 1px solid #d6ddd7; border-radius: 8px; background: #eef2ed; }
 .boundary-setting p { flex: 1; margin: 0; }
@@ -164,6 +172,7 @@ kbd { padding: 4px 6px; border: 1px solid #d8ddd6; border-bottom-width: 2px; bor
 .boundary-setting small { color: #68756d; font-size: 7px; font-weight: 900; letter-spacing: .08em; }
 .boundary-setting b { margin-top: 3px; color: #3c4941; font-size: 8px; }
 .boundary-setting em { padding: 3px 5px; border-radius: 4px; color: #657168; background: #dfe6df; font-size: 7px; font-style: normal; font-weight: 800; }
+.boundary-fields { margin-top: 9px; }
 .start-poses { display: grid; gap: 7px; margin-top: 15px; }
 .start-poses > div { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 7px 10px; border: 1px solid #e0e5de; border-radius: 8px; background: #fff; }
 .start-poses p { margin: 0; }

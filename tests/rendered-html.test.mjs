@@ -29,6 +29,8 @@ test("server-renders the Neural Tracker map editor", async () => {
   assert.match(html, /▱ 框选/);
   assert.match(html, /aspect-ratio:80 \/ 80/);
   assert.match(html, /neural_tracker 外墙/);
+  assert.match(html, /外墙厚度/);
+  assert.match(html, /外墙高度/);
   assert.match(html, /TRACKER 起点/);
   assert.match(html, /TARGET 起点/);
   for (const label of ["矩形", "墙体", "圆柱", "L 型", "E 型", "T 型", "H 型", "S 型", "F 型", "棱台", "拱桥", "树状"]) {

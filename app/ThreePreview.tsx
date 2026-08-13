@@ -117,8 +117,11 @@ export default function ThreePreview(props: Props) {
         localRects(item).forEach(r=>{const p=rotate(r.x,r.y,angle);addBox(item.x+p.x,item.y+p.y,r.width,r.depth,item.height,angle,selected);});
       } else if(item.shape==="cylinder") addCylinder(item.x,item.y,item.radius,item.height,selected);
       else if(item.shape==="tree") {
-        const trunkH=Math.max(.2,item.height*.58); addCylinder(item.x,item.y,item.radius,trunkH,selected,palette.trunk);
-        addCylinder(item.x,item.y,item.crownRadius,item.height-trunkH,selected,palette.crown,trunkH);
+        const trunkH=Math.max(.2,item.height*.56), crownH=item.height-trunkH;
+        addCylinder(item.x,item.y,item.radius,trunkH,selected,palette.trunk);
+        [0,120,240].forEach((degrees,index)=>{const theta=(degrees*Math.PI/180)+angle,p=rotate(item.crownRadius*.28,0,theta);addBox(item.x+p.x,item.y+p.y,item.crownRadius*.62,Math.max(.08,item.radius*.38),Math.max(.08,item.radius*.35),theta,selected,trunkH*.76+index*.015);});
+        addCylinder(item.x,item.y,item.crownRadius,crownH*.58,selected,"#356f43",trunkH);
+        addCylinder(item.x,item.y,item.crownRadius*.74,crownH*.55,selected,"#4f8a58",trunkH+crownH*.45);
       } else if(item.shape==="frustum") {
         const bottom=[[ -item.width/2,-item.depth/2],[item.width/2,-item.depth/2],[item.width/2,item.depth/2],[-item.width/2,item.depth/2]];
         const top=bottom.map(([x,y])=>[x*item.topScale,y*item.topScale]);

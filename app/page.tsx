@@ -113,7 +113,7 @@ function boundaryXml(file: MapFile) {
   const horizontalY = file.map.height / 2 - halfThickness;
   const verticalX = file.map.width / 2 - halfThickness;
   const rgba = "0.17 0.21 0.23 1";
-  return `    <!-- neural_tracker closed boundary: tracker.radius = ${xmlNumber(thickness)} m -->
+  return `    <!-- neural_tracker closed boundary: thickness ${xmlNumber(thickness)} m, height ${xmlNumber(height)} m -->
     <body name="map_boundary_top" pos="0 ${xmlNumber(horizontalY)} ${xmlNumber(halfHeight)}">
       <geom name="map_boundary_top_geom" type="box" size="${xmlNumber(file.map.width / 2)} ${xmlNumber(halfThickness)} ${xmlNumber(halfHeight)}" rgba="${rgba}"/>
     </body>
@@ -154,9 +154,18 @@ function toMujoco(file: MapFile) {
       return `${header}\n      <geom name="${body}_geom" type="mesh" mesh="frustum_${String(index).padStart(3, "0")}" rgba="0.38 0.44 0.42 1"/>\n    </body>`;
     }
     if (obstacle.shape === "tree") {
-      const trunkHeight = Math.max(0.2, obstacle.height * 0.58);
-      const crownZ = trunkHeight + (obstacle.height - trunkHeight) / 2;
-      return `    <body name="${body}" pos="${xmlNumber(obstacle.x)} ${xmlNumber(obstacle.y)} 0" euler="0 0 ${xmlNumber(angle)}">\n      <geom name="${body}_trunk" type="cylinder" pos="0 0 ${xmlNumber(trunkHeight / 2)}" size="${xmlNumber(obstacle.radius)} ${xmlNumber(trunkHeight / 2)}" rgba="0.38 0.25 0.15 1"/>\n      <geom name="${body}_crown" type="ellipsoid" pos="0 0 ${xmlNumber(crownZ)}" size="${xmlNumber(obstacle.crownRadius)} ${xmlNumber(obstacle.crownRadius)} ${xmlNumber((obstacle.height - trunkHeight) / 2)}" rgba="0.23 0.46 0.29 1"/>\n    </body>`;
+      const trunkHeight = Math.max(0.2, obstacle.height * 0.56);
+      const crownHeight = obstacle.height - trunkHeight;
+      const lowerCrownHeight = crownHeight * 0.62;
+      const upperCrownHeight = crownHeight * 0.55;
+      const branchStart = trunkHeight * 0.72;
+      const branchEnd = trunkHeight + crownHeight * 0.18;
+      const branchReach = obstacle.crownRadius * 0.52;
+      const branches = [0, 120, 240].map((degrees, branch) => {
+        const radians = degrees * Math.PI / 180;
+        return `      <geom name="${body}_branch_${branch}" type="capsule" fromto="0 0 ${xmlNumber(branchStart)} ${xmlNumber(Math.cos(radians) * branchReach)} ${xmlNumber(Math.sin(radians) * branchReach)} ${xmlNumber(branchEnd)}" size="${xmlNumber(Math.max(0.04, obstacle.radius * 0.28))}" rgba="0.38 0.25 0.15 1"/>`;
+      }).join("\n");
+      return `    <body name="${body}" pos="${xmlNumber(obstacle.x)} ${xmlNumber(obstacle.y)} 0" euler="0 0 ${xmlNumber(angle)}">\n      <geom name="${body}_trunk" type="cylinder" pos="0 0 ${xmlNumber(trunkHeight / 2)}" size="${xmlNumber(obstacle.radius)} ${xmlNumber(trunkHeight / 2)}" rgba="0.38 0.25 0.15 1"/>\n${branches}\n      <geom name="${body}_crown_lower" type="ellipsoid" pos="0 0 ${xmlNumber(trunkHeight + lowerCrownHeight * 0.38)}" size="${xmlNumber(obstacle.crownRadius)} ${xmlNumber(obstacle.crownRadius * 0.92)} ${xmlNumber(lowerCrownHeight / 2)}" rgba="0.18 0.43 0.25 1"/>\n      <geom name="${body}_crown_upper" type="ellipsoid" pos="0 0 ${xmlNumber(obstacle.height - upperCrownHeight * 0.42)}" size="${xmlNumber(obstacle.crownRadius * 0.72)} ${xmlNumber(obstacle.crownRadius * 0.68)} ${xmlNumber(upperCrownHeight / 2)}" rgba="0.27 0.55 0.32 1"/>\n    </body>`;
     }
     if (obstacle.shape === "arch") {
       const thickness = Math.min(clampedThickness(obstacle), obstacle.width / 3);
@@ -453,6 +462,25 @@ export default function Home() {
     announce(count > 1 ? `已批量删除 ${count} 个障碍物` : "障碍物已删除");
   }, [selectedIds, obstacles, commit, announce, clearSelection]);
 
+  const copySelected = useCallback(() => {
+    if (!selectedIds.length) return;
+    const copying = new Set(selectedIds);
+    const offset = Math.max(0.5, snap ? Math.max(resolution, 0.25) * 2 : 0.5);
+    const copies = obstacles.filter((item) => copying.has(item.id)).map((item) => ({
+      ...item,
+      id: uid(),
+      name: `${item.name} 副本`,
+      x: rounded(Math.max(-mapWidth / 2, Math.min(mapWidth / 2, item.x + offset))),
+      y: rounded(Math.max(-mapHeight / 2, Math.min(mapHeight / 2, item.y - offset))),
+    }));
+    if (!copies.length) return;
+    commit([...obstacles, ...copies]);
+    const ids = copies.map((item) => item.id);
+    setSelectedIds(ids);
+    setSelectedId(ids.length === 1 ? ids[0] : null);
+    announce(copies.length > 1 ? `已批量复制 ${copies.length} 个障碍物` : "障碍物已复制");
+  }, [selectedIds, obstacles, commit, announce, snap, resolution, mapWidth, mapHeight]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.target as HTMLElement)?.matches("input, textarea")) return;
@@ -461,12 +489,16 @@ export default function Home() {
         if (event.shiftKey) redo();
         else undo();
       }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        copySelected();
+      }
       if (event.key === "Delete" || event.key === "Backspace") removeSelected();
       if (event.key === "Escape") { setPlacing(false); setSelectionMode(false); setMarquee(null); marqueeRef.current = null; clearSelection(); }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [undo, redo, removeSelected, clearSelection]);
+  }, [undo, redo, removeSelected, copySelected, clearSelection]);
 
   const exportJson = () => {
     download(`${safeName(mapName)}.json`, JSON.stringify(mapFile, null, 2), "application/json");
@@ -546,7 +578,7 @@ export default function Home() {
 
       <section className="canvas-column">
         <div className="canvas-toolbar">
-          <div className="toolbar-group"><button onClick={undo} disabled={!undoStack.length} title="撤销">↶</button><button onClick={redo} disabled={!redoStack.length} title="重做">↷</button><i /><button className={placing ? "active" : ""} onClick={() => { setPlacing(!placing); setSelectionMode(false); }}>⌖ 放置</button><button className={!placing && !selectionMode ? "active" : ""} onClick={() => { setPlacing(false); setSelectionMode(false); }}>↖ 选择</button><button className={selectionMode ? "active" : ""} onClick={() => { if (!selectionMode) clearSelection(); setSelectionMode(!selectionMode); setPlacing(false); }}>▱ 框选</button>{selectedIds.length > 1 && <button className="bulk-delete-button" onClick={removeSelected}>⌫ 删除选中 ({selectedIds.length})</button>}</div>
+          <div className="toolbar-group"><button onClick={undo} disabled={!undoStack.length} title="撤销">↶</button><button onClick={redo} disabled={!redoStack.length} title="重做">↷</button><i /><button className={placing ? "active" : ""} onClick={() => { setPlacing(!placing); setSelectionMode(false); }}>⌖ 放置</button><button className={!placing && !selectionMode ? "active" : ""} onClick={() => { setPlacing(false); setSelectionMode(false); }}>↖ 选择</button><button className={selectionMode ? "active" : ""} onClick={() => { if (!selectionMode) clearSelection(); setSelectionMode(!selectionMode); setPlacing(false); }}>▱ 框选</button>{selectedIds.length > 1 && <><button className="bulk-copy-button" onClick={copySelected}>⧉ 复制 ({selectedIds.length})</button><button className="bulk-delete-button" onClick={removeSelected}>⌫ 删除 ({selectedIds.length})</button></>}</div>
           <div className="view-switch"><button className={viewMode === "2d" ? "active" : ""} onClick={() => setViewMode("2d")}>2D 编辑</button><button className={viewMode === "3d" ? "active" : ""} onClick={() => { setViewMode("3d"); setPlacing(false); setSelectionMode(false); clearSelection(); }}>3D 预览</button></div>
           <label className="snap-control"><input type="checkbox" checked={snap} onChange={(event) => setSnap(event.target.checked)} /> 网格吸附 <kbd>{Math.max(resolution, 0.25)} m</kbd></label>
         </div>
@@ -577,7 +609,7 @@ export default function Home() {
               {parts.map((part, index) => <i key={index} className="shape-part" style={{ left: `${(part.x / item.width + .5) * 100}%`, top: `${(.5 - part.y / item.depth) * 100}%`, width: `${part.width / item.width * 100}%`, height: `${part.depth / item.depth * 100}%` }} />)}
               {item.shape === "frustum" && <i className="frustum-top" style={{ inset: `${(1 - item.topScale) * 50}%` }} />}
               {item.shape === "arch" && <><i className="arch-leg arch-left" style={{ width: `${clampedThickness(item) / item.width * 100}%` }} /><i className="arch-leg arch-right" style={{ width: `${clampedThickness(item) / item.width * 100}%` }} /><i className="arch-span" /></>}
-              {item.shape === "tree" && <><i className="tree-crown" /><i className="tree-trunk" style={{ width: `${item.radius / item.crownRadius * 100}%`, height: `${item.radius / item.crownRadius * 100}%` }} /></>}
+              {item.shape === "tree" && <><i className="tree-crown tree-crown-main" /><i className="tree-crown tree-crown-left" /><i className="tree-crown tree-crown-right" /><i className="tree-branch tree-branch-a" /><i className="tree-branch tree-branch-b" /><i className="tree-branch tree-branch-c" /><i className="tree-trunk" style={{ width: `${item.radius / item.crownRadius * 100}%`, height: `${item.radius / item.crownRadius * 100}%` }} /></>}
             </button>;
           })}
           {marquee && <div className="selection-marquee" aria-hidden="true" style={{ left: Math.min(marquee.startX, marquee.currentX), top: Math.min(marquee.startY, marquee.currentY), width: Math.abs(marquee.currentX - marquee.startX), height: Math.abs(marquee.currentY - marquee.startY) }} />}
@@ -590,7 +622,7 @@ export default function Home() {
 
       <aside className="right-panel panel">
         <div className="panel-heading"><div><small>03 / PROPERTIES</small><h2>属性检查器</h2></div><span className="step-pill muted">3</span></div>
-        {selectedIds.length > 1 ? <div className="multi-inspector"><span>▱</span><b>已选中 {selectedIds.length} 个障碍物</b><p>按 Delete / Backspace，或点击下方按钮批量删除。此操作可撤销。</p><button className="danger" onClick={removeSelected}>⌫ 批量删除选中项</button><button onClick={clearSelection}>取消选择</button></div> : selected ? <div className="inspector">
+        {selectedIds.length > 1 ? <div className="multi-inspector"><span>▱</span><b>已选中 {selectedIds.length} 个障碍物</b><p>可一次复制或删除全部选中项，两种操作都支持撤销和重做。</p><button className="copy" onClick={copySelected}>⧉ 批量复制选中项</button><button className="danger" onClick={removeSelected}>⌫ 批量删除选中项</button><button onClick={clearSelection}>取消选择</button></div> : selected ? <div className="inspector">
           <label className="name-field"><span>名称</span><input value={selected.name} onChange={(event) => updateObstacle(selected.id, { name: event.target.value })} /></label>
           <div className="type-chip"><span>{SHAPES.find((item) => item.id === selected.shape)?.glyph}</span><div><small>类型</small><b>{SHAPES.find((item) => item.id === selected.shape)?.title}</b></div></div>
           <div className="subheading compact"><div><small>TRANSFORM</small><h3>位置与旋转</h3></div></div>
@@ -608,13 +640,14 @@ export default function Home() {
             {selected.shape === "frustum" && <NumberField label="顶面比例" value={selected.topScale * 100} min={10} max={95} step={5} suffix="%" onChange={(value) => updateObstacle(selected.id, { topScale: Math.max(.1, Math.min(.95, value / 100)) })} />}
             {selected.shape === "arch" && <NumberField label="净空高度" value={selected.clearance} min={0.2} max={selected.height - .05} onChange={(value) => updateObstacle(selected.id, { clearance: Math.max(.2, Math.min(value, selected.height - .05)) })} />}
           </div>
-          <div className="inspector-actions"><button onClick={() => { const copy = { ...selected, id: uid(), name: `${selected.name} 副本`, x: rounded(selected.x + 0.5), y: rounded(selected.y - 0.5) }; commit([...obstacles, copy]); selectSingle(copy.id); }}>⧉ 复制</button><button className="danger" onClick={removeSelected}>⌫ 删除</button></div>
+          <div className="inspector-actions"><button onClick={copySelected}>⧉ 复制</button><button className="danger" onClick={removeSelected}>⌫ 删除</button></div>
         </div> : <div className="empty-inspector"><span>↖</span><b>未选择障碍物</b><p>点击画布中的障碍物，在此精确调整位置、角度与尺寸。</p></div>}
 
         <div className="map-settings">
           <div className="subheading compact"><div><small>MAP SETTINGS</small><h3>地图参数</h3></div></div>
           <div className="field-grid"><NumberField label="宽度" value={mapWidth} min={5} max={100} step={1} onChange={setMapWidth} /><NumberField label="高度" value={mapHeight} min={5} max={100} step={1} onChange={setMapHeight} /><NumberField label="分辨率" value={resolution} min={0.01} max={1} step={0.01} onChange={setResolution} /></div>
-          <div className="boundary-setting"><span className="pose-dot boundary-dot" /><p><small>NEURAL_TRACKER 外墙</small><b>四边封闭 · 厚 0.15 m · 高 1.50 m</b></p><em>锁定</em></div>
+          <div className="boundary-setting"><span className="pose-dot boundary-dot" /><p><small>NEURAL_TRACKER 外墙</small><b>四边封闭 · 参数同步导出</b></p><em>可编辑</em></div>
+          <div className="field-grid boundary-fields"><NumberField label="外墙厚度" value={boundary.thickness} min={0.05} max={Math.min(mapWidth, mapHeight) / 4} step={0.05} onChange={(value) => setBoundary({ ...boundary, thickness: Math.max(0.05, Math.min(value, Math.min(mapWidth, mapHeight) / 4)) })} /><NumberField label="外墙高度" value={boundary.height} min={0.1} max={20} step={0.1} onChange={(value) => setBoundary({ ...boundary, height: Math.max(0.1, Math.min(value, 20)) })} /></div>
           <div className="start-poses">
             <div><span className="pose-dot tracker-dot" /><p><small>TRACKER 起点</small><b>−9.5, 0.0, 0°</b></p></div>
             <div><span className="pose-dot target-dot" /><p><small>TARGET 起点</small><b>−7.0, 0.0, 0°</b></p></div>
