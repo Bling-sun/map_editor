@@ -7,6 +7,8 @@ export type ShapeGenerationOptions = {
   maxSize: number;
   minHeight: number;
   maxHeight: number;
+  minThickness: number;
+  maxThickness: number;
 };
 
 export type GeneratorConfig = Record<Shape, ShapeGenerationOptions>;
@@ -49,20 +51,28 @@ const option = (
   maxSize: number,
   minHeight: number,
   maxHeight: number,
-): ShapeGenerationOptions => ({ enabled, count, minSize, maxSize, minHeight, maxHeight });
+  minThickness = 0,
+  maxThickness = 0,
+): ShapeGenerationOptions => ({ enabled, count, minSize, maxSize, minHeight, maxHeight, minThickness, maxThickness });
+
+const THICKNESS_SHAPES: Shape[] = ["wall", "l_shape", "e_shape", "t_shape", "h_shape", "s_shape", "f_shape", "arch"];
+
+export function supportsGeneratedThickness(shape: Shape) {
+  return THICKNESS_SHAPES.includes(shape);
+}
 
 export const DEFAULT_GENERATOR_CONFIG: GeneratorConfig = {
   box: option(true, 6, 0.8, 2.5, 0.6, 1.8),
-  wall: option(true, 6, 2.5, 6, 1, 2),
+  wall: option(true, 6, 2.5, 6, 1, 2, 0.18, 0.45),
   cylinder: option(true, 8, 0.6, 1.8, 0.8, 2.2),
-  l_shape: option(false, 3, 2.5, 5, 1, 2),
-  e_shape: option(false, 2, 3, 5.5, 1, 2),
-  t_shape: option(false, 3, 2.5, 5, 1, 2),
-  h_shape: option(false, 2, 3, 5.5, 1, 2),
-  s_shape: option(false, 2, 3, 5.5, 1, 2),
-  f_shape: option(false, 2, 3, 5.5, 1, 2),
+  l_shape: option(false, 3, 2.5, 5, 1, 2, 0.18, 0.5),
+  e_shape: option(false, 2, 3, 5.5, 1, 2, 0.18, 0.5),
+  t_shape: option(false, 3, 2.5, 5, 1, 2, 0.18, 0.5),
+  h_shape: option(false, 2, 3, 5.5, 1, 2, 0.18, 0.5),
+  s_shape: option(false, 2, 3, 5.5, 1, 2, 0.18, 0.5),
+  f_shape: option(false, 2, 3, 5.5, 1, 2, 0.18, 0.5),
   frustum: option(false, 4, 1.2, 3, 0.8, 2.5),
-  arch: option(false, 3, 2.5, 5, 2, 3.5),
+  arch: option(false, 3, 2.5, 5, 2, 3.5, 0.2, 0.55),
   tree: option(true, 8, 1.2, 3, 2.2, 4.5),
 };
 
@@ -74,23 +84,24 @@ function makeObstacle(shape: Shape, index: number, settings: ShapeGenerationOpti
   const size = randomBetween(settings.minSize, settings.maxSize, random);
   const secondSize = randomBetween(settings.minSize, settings.maxSize, random);
   const height = randomBetween(settings.minHeight, settings.maxHeight, random);
-  const thinDepth = Math.max(0.18, Math.min(0.65, size * randomBetween(0.08, 0.16, random)));
+  const generatedThickness = supportsGeneratedThickness(shape)
+    ? randomBetween(settings.minThickness, settings.maxThickness, random)
+    : 0.3;
   let width = size;
   let depth = secondSize;
   let radius = Math.max(0.08, size / 2);
   let crownRadius = Math.max(radius, size / 2);
 
-  if (shape === "wall") depth = thinDepth;
+  if (shape === "wall") depth = generatedThickness;
   if (shape === "cylinder") width = depth = size;
-  if (shape === "arch") depth = Math.max(0.35, Math.min(1.2, size * randomBetween(0.14, 0.28, random)));
+  if (shape === "arch") depth = Math.max(generatedThickness, Math.max(0.35, Math.min(1.2, size * randomBetween(0.14, 0.28, random))));
   if (shape === "tree") {
     width = depth = size;
     crownRadius = size / 2;
     radius = Math.max(0.1, Math.min(crownRadius * 0.34, size * randomBetween(0.08, 0.14, random)));
   }
 
-  const thicknessLimit = Math.min(width, depth);
-  const thickness = Math.max(0.12, Math.min(thicknessLimit, Math.min(width, depth) * randomBetween(0.12, 0.22, random)));
+  const thickness = supportsGeneratedThickness(shape) ? generatedThickness : Math.min(0.3, width, depth);
   const clearance = Math.max(0.25, Math.min(height - 0.1, height * randomBetween(0.55, 0.72, random)));
 
   return {
@@ -131,6 +142,11 @@ function validateConfiguration(config: GeneratorConfig, spacing: number) {
     if (!Number.isInteger(value.count) || value.count < 0) return `${SHAPE_NAMES[shape]}的数量必须是非负整数。`;
     if (value.minSize <= 0 || value.maxSize < value.minSize) return `${SHAPE_NAMES[shape]}的尺寸范围无效。`;
     if (value.minHeight <= 0 || value.maxHeight < value.minHeight) return `${SHAPE_NAMES[shape]}的高度范围无效。`;
+    if (supportsGeneratedThickness(shape)) {
+      if (value.minThickness <= 0 || value.maxThickness < value.minThickness) return `${SHAPE_NAMES[shape]}的厚度范围无效。`;
+      const thicknessLimit = shape === "arch" ? value.minSize / 3 : value.minSize;
+      if (value.maxThickness > thicknessLimit) return `${SHAPE_NAMES[shape]}的最大厚度不能超过 ${rounded(thicknessLimit)} 米。`;
+    }
     total += value.count;
   }
   if (!total) return "已选元素的数量不能全部为 0。";

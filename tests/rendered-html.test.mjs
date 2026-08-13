@@ -44,7 +44,12 @@ test("generates and verifies non-overlapping layouts", async () => {
     for (let index = 0; index < 50; index += 1) {
       const result = generateNonOverlappingMap({ ...base, config: DEFAULT_GENERATOR_CONFIG, snapGrid: 0.25 });
       if (!result.ok || result.obstacles.length !== 28 || !verifyGeneratedLayout(result.obstacles, base)) process.exit(1);
+      const walls = result.obstacles.filter((item) => item.shape === "wall");
+      if (walls.some((item) => item.thickness < 0.18 || item.thickness > 0.45 || item.depth !== item.thickness)) process.exit(1);
     }
+    const config = Object.fromEntries(Object.entries(DEFAULT_GENERATOR_CONFIG).map(([shape, value]) => [shape, { ...value, enabled: shape === "l_shape", count: shape === "l_shape" ? 20 : value.count, minThickness: 0.31, maxThickness: 0.32 }]));
+    const composite = generateNonOverlappingMap({ ...base, config, snapGrid: 0.25 });
+    if (!composite.ok || composite.obstacles.some((item) => item.thickness < 0.31 || item.thickness > 0.32)) process.exit(1);
   `;
   const { stderr } = await run(executable, ["-e", script], { cwd: projectRoot.pathname });
   assert.equal(stderr, "");

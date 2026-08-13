@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { DEFAULT_GENERATOR_CONFIG, GeneratorConfig } from "./map-generator";
+import { DEFAULT_GENERATOR_CONFIG, GeneratorConfig, supportsGeneratedThickness } from "./map-generator";
 import type { Shape } from "./map-types";
 
 type ShapeOption = { id: Shape; title: string; hint: string; glyph: string };
@@ -58,7 +58,7 @@ export default function MapGenerator({ open, shapes, onClose, onGenerate }: Prop
   return <div className="generator-backdrop">
     <section className="generator-dialog" role="dialog" aria-modal="true" aria-labelledby="generator-title">
       <header className="generator-header">
-        <div><small>RANDOM MAP BUILDER</small><h2 id="generator-title">一键生成无重叠地图</h2><p>选择多个元素类型，并分别设置数量、平面尺寸与高度范围。</p></div>
+        <div><small>RANDOM MAP BUILDER</small><h2 id="generator-title">一键生成无重叠地图</h2><p>选择多个元素类型，并分别设置数量、平面尺寸、高度与壁厚范围。</p></div>
         <button className="generator-close" aria-label="关闭一键生成面板" onClick={onClose}>×</button>
       </header>
 
@@ -68,7 +68,7 @@ export default function MapGenerator({ open, shapes, onClose, onGenerate }: Prop
       </div>
 
       <div className="generator-table" role="table" aria-label="随机元素配置">
-        <div className="generator-table-head" role="row"><span>元素类型</span><span>数量</span><span>平面尺寸 (m)</span><span>高度 (m)</span></div>
+        <div className="generator-table-head" role="row"><span>元素类型</span><span>数量</span><span>平面尺寸 (m)</span><span>高度 (m)</span><span>厚度 (m)</span></div>
         {shapes.map((shape) => {
           const values = config[shape.id];
           return <div className={`generator-row ${values.enabled ? "enabled" : ""}`} role="row" key={shape.id}>
@@ -76,6 +76,7 @@ export default function MapGenerator({ open, shapes, onClose, onGenerate }: Prop
             <label><span className="mobile-label">数量</span><input aria-label={`${shape.title}数量`} type="number" min="0" max="200" step="1" disabled={!values.enabled} value={values.count} onChange={(event) => update(shape.id, { count: Number(event.target.value) })} /></label>
             <div className="generator-range"><span className="mobile-label">平面尺寸</span><input aria-label={`${shape.title}最小尺寸`} type="number" min="0.05" step="0.1" disabled={!values.enabled} value={values.minSize} onChange={(event) => update(shape.id, { minSize: Number(event.target.value) })} /><i>—</i><input aria-label={`${shape.title}最大尺寸`} type="number" min="0.05" step="0.1" disabled={!values.enabled} value={values.maxSize} onChange={(event) => update(shape.id, { maxSize: Number(event.target.value) })} /></div>
             <div className="generator-range"><span className="mobile-label">高度</span><input aria-label={`${shape.title}最小高度`} type="number" min="0.05" step="0.1" disabled={!values.enabled} value={values.minHeight} onChange={(event) => update(shape.id, { minHeight: Number(event.target.value) })} /><i>—</i><input aria-label={`${shape.title}最大高度`} type="number" min="0.05" step="0.1" disabled={!values.enabled} value={values.maxHeight} onChange={(event) => update(shape.id, { maxHeight: Number(event.target.value) })} /></div>
+            {supportsGeneratedThickness(shape.id) ? <div className="generator-range"><span className="mobile-label">厚度</span><input aria-label={`${shape.title}最小厚度`} type="number" min="0.05" step="0.05" disabled={!values.enabled} value={values.minThickness} onChange={(event) => update(shape.id, { minThickness: Number(event.target.value) })} /><i>—</i><input aria-label={`${shape.title}最大厚度`} type="number" min="0.05" step="0.05" disabled={!values.enabled} value={values.maxThickness} onChange={(event) => update(shape.id, { maxThickness: Number(event.target.value) })} /></div> : <div className="generator-not-applicable"><span className="mobile-label">厚度</span><em>不适用</em></div>}
           </div>;
         })}
       </div>
