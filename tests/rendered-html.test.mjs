@@ -26,6 +26,7 @@ test("server-renders the Neural Tracker map editor", async () => {
   const html = await response.text();
   assert.match(html, /<title>Neural Tracker Map Studio<\/title>/i);
   assert.match(html, /⚡ 一键生成/);
+  assert.match(html, /▱ 框选/);
   assert.match(html, /aspect-ratio:80 \/ 80/);
   assert.match(html, /neural_tracker 外墙/);
   assert.match(html, /TRACKER 起点/);
@@ -44,6 +45,18 @@ test("generates and verifies non-overlapping layouts", async () => {
       const result = generateNonOverlappingMap({ ...base, config: DEFAULT_GENERATOR_CONFIG, snapGrid: 0.25 });
       if (!result.ok || result.obstacles.length !== 28 || !verifyGeneratedLayout(result.obstacles, base)) process.exit(1);
     }
+  `;
+  const { stderr } = await run(executable, ["-e", script], { cwd: projectRoot.pathname });
+  assert.equal(stderr, "");
+});
+
+test("marquee intersection includes rotated obstacle bounds", async () => {
+  const executable = new URL("../node_modules/.bin/tsx", import.meta.url).pathname;
+  const script = `
+    import { obstacleIntersectsRect } from "./app/map-types.ts";
+    const obstacle = { id: "test", name: "test", shape: "box", x: 2, y: 3, angle: 45, width: 4, depth: 2, height: 1, thickness: 0.2, radius: 1, topScale: 0.5, clearance: 1, crownRadius: 1 };
+    if (!obstacleIntersectsRect(obstacle, { minX: 3.9, maxX: 4.2, minY: 2.8, maxY: 3.2 })) process.exit(1);
+    if (obstacleIntersectsRect(obstacle, { minX: 8, maxX: 9, minY: 8, maxY: 9 })) process.exit(1);
   `;
   const { stderr } = await run(executable, ["-e", script], { cwd: projectRoot.pathname });
   assert.equal(stderr, "");

@@ -4,7 +4,7 @@ import { ChangeEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, use
 import MapGenerator from "./MapGenerator";
 import ThreePreview from "./ThreePreview";
 import { generateNonOverlappingMap, GeneratorConfig } from "./map-generator";
-import { Obstacle, Shape, clampedThickness, isCompositeShape, localRects } from "./map-types";
+import { Obstacle, Shape, clampedThickness, isCompositeShape, localRects, obstacleFootprint, obstacleIntersectsRect } from "./map-types";
 
 type MapFile = {
   format: "neural-tracker-map";
@@ -68,6 +68,15 @@ type DragState = {
   mapRect: DOMRect;
   before: Obstacle[];
   moved: boolean;
+};
+
+type MarqueeState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+  mapRect: DOMRect;
 };
 
 const uid = () => `obs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -203,8 +212,11 @@ export default function Home() {
   const [draft, setDraft] = useState(PRESETS.wall);
   const [obstacles, setObstacles] = useState<Obstacle[]>(STARTER_OBSTACLES);
   const [selectedId, setSelectedId] = useState<string | null>(STARTER_OBSTACLES[1].id);
+  const [selectedIds, setSelectedIds] = useState<string[]>([STARTER_OBSTACLES[1].id]);
   const [snap, setSnap] = useState(true);
   const [placing, setPlacing] = useState(true);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [marquee, setMarquee] = useState<MarqueeState | null>(null);
   const [viewMode, setViewMode] = useState<"2d" | "3d">("2d");
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [tracker, setTracker] = useState(TRACKER_START);
@@ -215,9 +227,11 @@ export default function Home() {
   const fileInput = useRef<HTMLInputElement>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
+  const marqueeRef = useRef<MarqueeState | null>(null);
   const previewDragBeforeRef = useRef<Obstacle[] | null>(null);
 
   const selected = obstacles.find((item) => item.id === selectedId) ?? null;
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const mapFile = useMemo<MapFile>(() => ({ format: "neural-tracker-map", version: 1, name: mapName, map: { width: mapWidth, height: mapHeight, resolution }, boundary, tracker, target, obstacles }), [mapName, mapWidth, mapHeight, resolution, boundary, tracker, target, obstacles]);
 
   const announce = useCallback((message: string) => {
@@ -233,6 +247,16 @@ export default function Home() {
 
   const closeGenerator = useCallback(() => setGeneratorOpen(false), []);
 
+  const clearSelection = useCallback(() => {
+    setSelectedId(null);
+    setSelectedIds([]);
+  }, []);
+
+  const selectSingle = useCallback((id: string | null) => {
+    setSelectedId(id);
+    setSelectedIds(id ? [id] : []);
+  }, []);
+
   const generateMap = (config: GeneratorConfig, spacing: number) => {
     const result = generateNonOverlappingMap({
       config,
@@ -246,8 +270,9 @@ export default function Home() {
     });
     if (!result.ok) return result.error;
     commit(result.obstacles);
-    setSelectedId(null);
+    clearSelection();
     setPlacing(false);
+    setSelectionMode(false);
     announce(`已生成 ${result.obstacles.length} 个无重叠障碍物`);
     return null;
   };
@@ -260,10 +285,60 @@ export default function Home() {
     setShape(next);
     setDraft(PRESETS[next]);
     setPlacing(true);
-    setSelectedId(null);
+    setSelectionMode(false);
+    clearSelection();
+  };
+
+  const startMarquee = (event: PointerEvent<HTMLDivElement>) => {
+    const mapRect = event.currentTarget.getBoundingClientRect();
+    const x = Math.max(0, Math.min(mapRect.width, event.clientX - mapRect.left));
+    const y = Math.max(0, Math.min(mapRect.height, event.clientY - mapRect.top));
+    const next = { pointerId: event.pointerId, startX: x, startY: y, currentX: x, currentY: y, mapRect };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    marqueeRef.current = next;
+    setMarquee(next);
+    clearSelection();
+  };
+
+  const moveMarquee = (event: PointerEvent<HTMLDivElement>) => {
+    const current = marqueeRef.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    const next = {
+      ...current,
+      currentX: Math.max(0, Math.min(current.mapRect.width, event.clientX - current.mapRect.left)),
+      currentY: Math.max(0, Math.min(current.mapRect.height, event.clientY - current.mapRect.top)),
+    };
+    marqueeRef.current = next;
+    setMarquee(next);
+  };
+
+  const finishMarquee = (event: PointerEvent<HTMLDivElement>) => {
+    const current = marqueeRef.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    const left = Math.min(current.startX, current.currentX) / current.mapRect.width;
+    const right = Math.max(current.startX, current.currentX) / current.mapRect.width;
+    const top = Math.min(current.startY, current.currentY) / current.mapRect.height;
+    const bottom = Math.max(current.startY, current.currentY) / current.mapRect.height;
+    const worldRect = {
+      minX: (left - 0.5) * mapWidth,
+      maxX: (right - 0.5) * mapWidth,
+      minY: (0.5 - bottom) * mapHeight,
+      maxY: (0.5 - top) * mapHeight,
+    };
+    const ids = obstacles.filter((item) => obstacleIntersectsRect(item, worldRect)).map((item) => item.id);
+    setSelectedIds(ids);
+    setSelectedId(ids.length === 1 ? ids[0] : null);
+    marqueeRef.current = null;
+    setMarquee(null);
+    if (ids.length) announce(`框选了 ${ids.length} 个障碍物`);
   };
 
   const mapPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (selectionMode) {
+      startMarquee(event);
+      return;
+    }
     if (!placing || (event.target as HTMLElement).closest("[data-obstacle]")) return;
     const rect = event.currentTarget.getBoundingClientRect();
     let x = ((event.clientX - rect.left) / rect.width - 0.5) * mapWidth;
@@ -276,17 +351,18 @@ export default function Home() {
     const count = obstacles.filter((item) => item.shape === shape).length + 1;
     const item: Obstacle = { id: uid(), name: `${SHAPES.find((item) => item.id === shape)?.title} ${String(count).padStart(2, "0")}`, shape, x: rounded(x), y: rounded(y), ...draft };
     commit([...obstacles, item]);
-    setSelectedId(item.id);
+    selectSingle(item.id);
     setPlacing(false);
     announce(`已放置：${item.name}`);
   };
 
   const obstaclePointerDown = (event: PointerEvent<HTMLButtonElement>, item: Obstacle) => {
+    if (selectionMode) return;
     event.stopPropagation();
     const mapRect = mapRef.current?.getBoundingClientRect();
     if (!mapRect) return;
     event.currentTarget.setPointerCapture(event.pointerId);
-    setSelectedId(item.id);
+    selectSingle(item.id);
     setPlacing(false);
     dragRef.current = {
       id: item.id,
@@ -356,8 +432,8 @@ export default function Home() {
     setRedoStack((stack) => [...stack, obstacles]);
     setObstacles(previous);
     setUndoStack((stack) => stack.slice(0, -1));
-    setSelectedId(null);
-  }, [undoStack, obstacles]);
+    clearSelection();
+  }, [undoStack, obstacles, clearSelection]);
 
   const redo = useCallback(() => {
     const next = redoStack.at(-1);
@@ -365,15 +441,17 @@ export default function Home() {
     setUndoStack((stack) => [...stack, obstacles]);
     setObstacles(next);
     setRedoStack((stack) => stack.slice(0, -1));
-    setSelectedId(null);
-  }, [redoStack, obstacles]);
+    clearSelection();
+  }, [redoStack, obstacles, clearSelection]);
 
   const removeSelected = useCallback(() => {
-    if (!selectedId) return;
-    commit(obstacles.filter((item) => item.id !== selectedId));
-    setSelectedId(null);
-    announce("障碍物已删除");
-  }, [selectedId, obstacles, commit, announce]);
+    if (!selectedIds.length) return;
+    const deleting = new Set(selectedIds);
+    commit(obstacles.filter((item) => !deleting.has(item.id)));
+    const count = selectedIds.length;
+    clearSelection();
+    announce(count > 1 ? `已批量删除 ${count} 个障碍物` : "障碍物已删除");
+  }, [selectedIds, obstacles, commit, announce, clearSelection]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -384,11 +462,11 @@ export default function Home() {
         else undo();
       }
       if (event.key === "Delete" || event.key === "Backspace") removeSelected();
-      if (event.key === "Escape") { setPlacing(false); setSelectedId(null); }
+      if (event.key === "Escape") { setPlacing(false); setSelectionMode(false); setMarquee(null); marqueeRef.current = null; clearSelection(); }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [undo, redo, removeSelected]);
+  }, [undo, redo, removeSelected, clearSelection]);
 
   const exportJson = () => {
     download(`${safeName(mapName)}.json`, JSON.stringify(mapFile, null, 2), "application/json");
@@ -414,7 +492,8 @@ export default function Home() {
       setTracker(parsed.tracker ?? TRACKER_START);
       setTarget(parsed.target ?? TARGET_START);
       setObstacles(parsed.obstacles.map((item) => ({ ...preset({}), ...item })));
-      setSelectedId(null);
+      clearSelection();
+      setSelectionMode(false);
       setUndoStack([]);
       setRedoStack([]);
       announce(`已导入 ${parsed.obstacles.length} 个障碍物`);
@@ -424,8 +503,6 @@ export default function Home() {
       event.target.value = "";
     }
   };
-
-  const footprint = (item: Obstacle) => item.shape === "cylinder" ? { width: item.radius * 2, depth: item.radius * 2 } : item.shape === "tree" ? { width: item.crownRadius * 2, depth: item.crownRadius * 2 } : { width: item.width, depth: item.depth };
 
   return <main className="app-shell">
     <header className="topbar">
@@ -463,17 +540,17 @@ export default function Home() {
           <NumberField label="高度" value={draft.height} min={0.05} onChange={(value) => setDraft({ ...draft, height: value })} />
         </div>
         <label className="angle-control"><span><b>放置角度</b><em>{draft.angle}°</em></span><input aria-label="放置角度" type="range" min="-180" max="180" step="1" value={draft.angle} onChange={(event) => setDraft({ ...draft, angle: Number(event.target.value) })} /></label>
-        <button className={`place-button ${placing ? "armed" : ""}`} onClick={() => { setPlacing(true); setSelectedId(null); }}>{placing ? "在画布中点击放置…" : "+ 放置一个障碍物"}</button>
+        <button className={`place-button ${placing ? "armed" : ""}`} onClick={() => { setPlacing(true); setSelectionMode(false); clearSelection(); }}>{placing ? "在画布中点击放置…" : "+ 放置一个障碍物"}</button>
         <p className="microcopy">放置后可直接拖动障碍物，也可在属性面板精确修改坐标与角度。</p>
       </aside>
 
       <section className="canvas-column">
         <div className="canvas-toolbar">
-          <div className="toolbar-group"><button onClick={undo} disabled={!undoStack.length} title="撤销">↶</button><button onClick={redo} disabled={!redoStack.length} title="重做">↷</button><i /><button className={placing ? "active" : ""} onClick={() => setPlacing(!placing)}>⌖ 放置</button><button className={!placing ? "active" : ""} onClick={() => setPlacing(false)}>↖ 选择</button></div>
-          <div className="view-switch"><button className={viewMode === "2d" ? "active" : ""} onClick={() => setViewMode("2d")}>2D 编辑</button><button className={viewMode === "3d" ? "active" : ""} onClick={() => { setViewMode("3d"); setPlacing(false); }}>3D 预览</button></div>
+          <div className="toolbar-group"><button onClick={undo} disabled={!undoStack.length} title="撤销">↶</button><button onClick={redo} disabled={!redoStack.length} title="重做">↷</button><i /><button className={placing ? "active" : ""} onClick={() => { setPlacing(!placing); setSelectionMode(false); }}>⌖ 放置</button><button className={!placing && !selectionMode ? "active" : ""} onClick={() => { setPlacing(false); setSelectionMode(false); }}>↖ 选择</button><button className={selectionMode ? "active" : ""} onClick={() => { if (!selectionMode) clearSelection(); setSelectionMode(!selectionMode); setPlacing(false); }}>▱ 框选</button>{selectedIds.length > 1 && <button className="bulk-delete-button" onClick={removeSelected}>⌫ 删除选中 ({selectedIds.length})</button>}</div>
+          <div className="view-switch"><button className={viewMode === "2d" ? "active" : ""} onClick={() => setViewMode("2d")}>2D 编辑</button><button className={viewMode === "3d" ? "active" : ""} onClick={() => { setViewMode("3d"); setPlacing(false); setSelectionMode(false); clearSelection(); }}>3D 预览</button></div>
           <label className="snap-control"><input type="checkbox" checked={snap} onChange={(event) => setSnap(event.target.checked)} /> 网格吸附 <kbd>{Math.max(resolution, 0.25)} m</kbd></label>
         </div>
-        {viewMode === "3d" ? <ThreePreview width={mapWidth} height={mapHeight} boundary={boundary} obstacles={obstacles} selectedId={selectedId} snapGrid={snap ? Math.max(resolution, .25) : null} tracker={tracker} target={target} onSelect={setSelectedId} onDragStart={previewDragStart} onDrag={previewDrag} onDragEnd={previewDragEnd} /> : <div ref={mapRef} className={`map-wrap ${placing ? "placing" : ""}`} style={{ aspectRatio: `${mapWidth} / ${mapHeight}` }} onPointerDown={mapPointerDown}>
+        {viewMode === "3d" ? <ThreePreview width={mapWidth} height={mapHeight} boundary={boundary} obstacles={obstacles} selectedId={selectedId} snapGrid={snap ? Math.max(resolution, .25) : null} tracker={tracker} target={target} onSelect={selectSingle} onDragStart={previewDragStart} onDrag={previewDrag} onDragEnd={previewDragEnd} /> : <div ref={mapRef} className={`map-wrap ${placing ? "placing" : ""} ${selectionMode ? "selecting" : ""}`} style={{ aspectRatio: `${mapWidth} / ${mapHeight}` }} onPointerDown={mapPointerDown} onPointerMove={moveMarquee} onPointerUp={finishMarquee} onPointerCancel={finishMarquee}>
           {boundary.enabled && <div className="boundary-walls" aria-label={`neural_tracker 外墙，厚 ${boundary.thickness} 米`}>
             <i className="boundary-wall boundary-top" style={{ height: `${boundary.thickness / mapHeight * 100}%` }} />
             <i className="boundary-wall boundary-bottom" style={{ height: `${boundary.thickness / mapHeight * 100}%` }} />
@@ -483,26 +560,27 @@ export default function Home() {
           <div className="axis axis-y"><span>+Y</span><i /></div><div className="axis axis-x"><span>+X</span><i /></div>
           <div className="origin-label">0, 0</div>
           {obstacles.map((item) => {
-            const size = footprint(item);
+            const size = obstacleFootprint(item);
             const parts = isCompositeShape(item.shape) ? localRects(item) : [];
             return <button
               type="button"
               data-obstacle
               aria-label={`${item.name}，点击选择或拖动`}
               key={item.id}
-              className={`obstacle ${item.shape} ${selectedId === item.id ? "selected" : ""}`}
+              className={`obstacle ${item.shape} ${selectedIdSet.has(item.id) ? "selected" : ""}`}
               style={{ left: `${(item.x / mapWidth + 0.5) * 100}%`, top: `${(0.5 - item.y / mapHeight) * 100}%`, width: `${size.width / mapWidth * 100}%`, height: `${size.depth / mapHeight * 100}%`, transform: `translate(-50%, -50%) rotate(${-item.angle}deg)` }}
               onPointerDown={(event) => obstaclePointerDown(event, item)}
               onPointerMove={obstaclePointerMove}
               onPointerUp={obstaclePointerUp}
               onPointerCancel={obstaclePointerUp}
-            ><span className="obstacle-label" style={{ transform: `rotate(${item.angle}deg)` }}>{selectedId === item.id ? item.name : ""}</span>
+            ><span className="obstacle-label" style={{ transform: `rotate(${item.angle}deg)` }}>{selectedIds.length === 1 && selectedId === item.id ? item.name : ""}</span>
               {parts.map((part, index) => <i key={index} className="shape-part" style={{ left: `${(part.x / item.width + .5) * 100}%`, top: `${(.5 - part.y / item.depth) * 100}%`, width: `${part.width / item.width * 100}%`, height: `${part.depth / item.depth * 100}%` }} />)}
               {item.shape === "frustum" && <i className="frustum-top" style={{ inset: `${(1 - item.topScale) * 50}%` }} />}
               {item.shape === "arch" && <><i className="arch-leg arch-left" style={{ width: `${clampedThickness(item) / item.width * 100}%` }} /><i className="arch-leg arch-right" style={{ width: `${clampedThickness(item) / item.width * 100}%` }} /><i className="arch-span" /></>}
               {item.shape === "tree" && <><i className="tree-crown" /><i className="tree-trunk" style={{ width: `${item.radius / item.crownRadius * 100}%`, height: `${item.radius / item.crownRadius * 100}%` }} /></>}
             </button>;
           })}
+          {marquee && <div className="selection-marquee" aria-hidden="true" style={{ left: Math.min(marquee.startX, marquee.currentX), top: Math.min(marquee.startY, marquee.currentY), width: Math.abs(marquee.currentX - marquee.startX), height: Math.abs(marquee.currentY - marquee.startY) }} />}
           <div className="target-marker" style={{ left: `${(target.x / mapWidth + 0.5) * 100}%`, top: `${(0.5 - target.y / mapHeight) * 100}%`, transform: `translate(-50%, -50%) rotate(${-target.yaw}deg)` }}><i /><span>目标</span></div>
           <div className="tracker-marker" style={{ left: `${(tracker.x / mapWidth + 0.5) * 100}%`, top: `${(0.5 - tracker.y / mapHeight) * 100}%`, transform: `translate(-50%, -50%) rotate(${-tracker.yaw}deg)` }}><i>NT</i><span>tracker</span></div>
           <span className="scale-label scale-left">−{mapWidth / 2}m</span><span className="scale-label scale-right">+{mapWidth / 2}m</span>
@@ -512,7 +590,7 @@ export default function Home() {
 
       <aside className="right-panel panel">
         <div className="panel-heading"><div><small>03 / PROPERTIES</small><h2>属性检查器</h2></div><span className="step-pill muted">3</span></div>
-        {selected ? <div className="inspector">
+        {selectedIds.length > 1 ? <div className="multi-inspector"><span>▱</span><b>已选中 {selectedIds.length} 个障碍物</b><p>按 Delete / Backspace，或点击下方按钮批量删除。此操作可撤销。</p><button className="danger" onClick={removeSelected}>⌫ 批量删除选中项</button><button onClick={clearSelection}>取消选择</button></div> : selected ? <div className="inspector">
           <label className="name-field"><span>名称</span><input value={selected.name} onChange={(event) => updateObstacle(selected.id, { name: event.target.value })} /></label>
           <div className="type-chip"><span>{SHAPES.find((item) => item.id === selected.shape)?.glyph}</span><div><small>类型</small><b>{SHAPES.find((item) => item.id === selected.shape)?.title}</b></div></div>
           <div className="subheading compact"><div><small>TRANSFORM</small><h3>位置与旋转</h3></div></div>
@@ -530,7 +608,7 @@ export default function Home() {
             {selected.shape === "frustum" && <NumberField label="顶面比例" value={selected.topScale * 100} min={10} max={95} step={5} suffix="%" onChange={(value) => updateObstacle(selected.id, { topScale: Math.max(.1, Math.min(.95, value / 100)) })} />}
             {selected.shape === "arch" && <NumberField label="净空高度" value={selected.clearance} min={0.2} max={selected.height - .05} onChange={(value) => updateObstacle(selected.id, { clearance: Math.max(.2, Math.min(value, selected.height - .05)) })} />}
           </div>
-          <div className="inspector-actions"><button onClick={() => { const copy = { ...selected, id: uid(), name: `${selected.name} 副本`, x: rounded(selected.x + 0.5), y: rounded(selected.y - 0.5) }; commit([...obstacles, copy]); setSelectedId(copy.id); }}>⧉ 复制</button><button className="danger" onClick={removeSelected}>⌫ 删除</button></div>
+          <div className="inspector-actions"><button onClick={() => { const copy = { ...selected, id: uid(), name: `${selected.name} 副本`, x: rounded(selected.x + 0.5), y: rounded(selected.y - 0.5) }; commit([...obstacles, copy]); selectSingle(copy.id); }}>⧉ 复制</button><button className="danger" onClick={removeSelected}>⌫ 删除</button></div>
         </div> : <div className="empty-inspector"><span>↖</span><b>未选择障碍物</b><p>点击画布中的障碍物，在此精确调整位置、角度与尺寸。</p></div>}
 
         <div className="map-settings">

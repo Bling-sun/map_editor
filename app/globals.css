@@ -78,6 +78,8 @@ input[type="range"] { width: 100%; accent-color: var(--green); }
 .toolbar-group { display: flex; align-items: center; gap: 4px; }
 .toolbar-group button { height: 32px; min-width: 32px; border: 0; border-radius: 6px; padding: 0 9px; background: transparent; font-size: 10px; font-weight: 700; cursor: pointer; }
 .toolbar-group button:hover, .toolbar-group button.active { color: var(--green); background: #fff; box-shadow: 0 1px 5px #29382f12; }
+.toolbar-group .bulk-delete-button { color: #a7443d; background: #fff4f2; }
+.toolbar-group .bulk-delete-button:hover { color: #96352f; background: #ffe9e6; }
 .toolbar-group button:disabled { opacity: .25; cursor: default; }
 .toolbar-group i { width: 1px; height: 18px; margin: 0 5px; background: #d3d9d1; }
 .snap-control { display: flex; align-items: center; gap: 7px; color: #657069; font-size: 9px; }
@@ -88,6 +90,8 @@ kbd { padding: 4px 6px; border: 1px solid #d8ddd6; border-bottom-width: 2px; bor
 .view-switch button.active { color: var(--green); background: #fff; box-shadow: 0 1px 5px #34403918; }
 .map-wrap { position: relative; max-height: calc(100vh - 194px); width: min(100%, calc(100vh - 194px)); margin: 0 auto; overflow: hidden; border: 1px solid #cfd6cc; background-color: #f9faf7; background-image: linear-gradient(#dfe4dc77 1px, transparent 1px), linear-gradient(90deg, #dfe4dc77 1px, transparent 1px), linear-gradient(#c8d0c655 1px, transparent 1px), linear-gradient(90deg, #c8d0c655 1px, transparent 1px); background-size: 2.5% 2.5%, 2.5% 2.5%, 25% 25%, 25% 25%; box-shadow: 0 10px 35px #38433c15; user-select: none; touch-action: none; }
 .map-wrap.placing { cursor: crosshair; }
+.map-wrap.selecting { cursor: cell; }
+.selection-marquee { position: absolute; z-index: 20; border: 1px solid #1f62d6; background: #3b82f627; box-shadow: inset 0 0 0 1px #ffffff99; pointer-events: none; }
 .axis { position: absolute; pointer-events: none; z-index: 1; }
 .axis i { position: absolute; display: block; background: #88a09180; }
 .axis span { position: absolute; color: #7b8b81; font-size: 8px; font-weight: 800; }
@@ -147,6 +151,12 @@ kbd { padding: 4px 6px; border: 1px solid #d8ddd6; border-bottom-width: 2px; bor
 .empty-inspector { display: flex; flex-direction: column; align-items: center; margin: 42px 5px 0; color: #7d8981; text-align: center; }
 .empty-inspector > span { display: grid; place-items: center; width: 48px; height: 48px; border: 1px dashed #bdc6bf; border-radius: 50%; font-size: 22px; }
 .empty-inspector b { margin-top: 14px; font-size: 11px; }.empty-inspector p { font-size: 9px; line-height: 1.6; }
+.multi-inspector { display: flex; flex-direction: column; align-items: stretch; margin-top: 24px; padding: 18px; border: 1px solid #cbd9f3; border-radius: 10px; background: #f5f8ff; text-align: center; }
+.multi-inspector > span { display: grid; place-items: center; align-self: center; width: 46px; height: 46px; border-radius: 50%; color: #1f5bc5; background: #e1ebff; font-size: 23px; }
+.multi-inspector > b { margin-top: 12px; color: #23477f; font-size: 11px; }
+.multi-inspector > p { margin: 7px 0 15px; color: #71809a; font-size: 9px; line-height: 1.55; }
+.multi-inspector > button { height: 36px; margin-top: 7px; border: 1px solid #d5dce8; border-radius: 7px; background: #fff; cursor: pointer; font-size: 9px; font-weight: 800; }
+.multi-inspector > button.danger { color: #ac3f38; border-color: #ebcecb; background: #fff7f6; }
 .map-settings { margin-top: 25px; padding-top: 1px; border-top: 1px solid var(--line); }
 .boundary-setting { display: flex; align-items: center; gap: 9px; min-height: 45px; margin-top: 15px; padding: 7px 10px; border: 1px solid #d6ddd7; border-radius: 8px; background: #eef2ed; }
 .boundary-setting p { flex: 1; margin: 0; }
