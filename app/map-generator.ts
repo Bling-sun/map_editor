@@ -79,6 +79,11 @@ export const DEFAULT_GENERATOR_CONFIG: GeneratorConfig = {
 const randomBetween = (min: number, max: number, random: () => number) => min + (max - min) * random();
 const rounded = (value: number) => Math.round(value * 1000) / 1000;
 const uid = () => `generated-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+export const GENERATED_ANGLES = [-180, -90, 0, 90, 180] as const;
+
+function randomGeneratedAngle(random: () => number) {
+  return GENERATED_ANGLES[Math.min(GENERATED_ANGLES.length - 1, Math.floor(random() * GENERATED_ANGLES.length))];
+}
 
 function makeObstacle(shape: Shape, index: number, settings: ShapeGenerationOptions, random: () => number): Obstacle {
   const size = randomBetween(settings.minSize, settings.maxSize, random);
@@ -110,7 +115,7 @@ function makeObstacle(shape: Shape, index: number, settings: ShapeGenerationOpti
     shape,
     x: 0,
     y: 0,
-    angle: rounded(randomBetween(-180, 180, random)),
+    angle: randomGeneratedAngle(random),
     width: rounded(width),
     depth: rounded(depth),
     height: rounded(height),

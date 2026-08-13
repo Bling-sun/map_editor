@@ -39,11 +39,12 @@ test("server-renders the Neural Tracker map editor", async () => {
 test("generates and verifies non-overlapping layouts", async () => {
   const executable = new URL("../node_modules/.bin/tsx", import.meta.url).pathname;
   const script = `
-    import { DEFAULT_GENERATOR_CONFIG, generateNonOverlappingMap, verifyGeneratedLayout } from "./app/map-generator.ts";
+    import { DEFAULT_GENERATOR_CONFIG, GENERATED_ANGLES, generateNonOverlappingMap, verifyGeneratedLayout } from "./app/map-generator.ts";
     const base = { mapWidth: 80, mapHeight: 80, boundaryThickness: 0.15, tracker: { x: -9.5, y: 0 }, target: { x: -7, y: 0 }, spacing: 0.35 };
     for (let index = 0; index < 50; index += 1) {
       const result = generateNonOverlappingMap({ ...base, config: DEFAULT_GENERATOR_CONFIG, snapGrid: 0.25 });
       if (!result.ok || result.obstacles.length !== 28 || !verifyGeneratedLayout(result.obstacles, base)) process.exit(1);
+      if (result.obstacles.some((item) => !GENERATED_ANGLES.includes(item.angle))) process.exit(1);
       const walls = result.obstacles.filter((item) => item.shape === "wall");
       if (walls.some((item) => item.thickness < 0.18 || item.thickness > 0.45 || item.depth !== item.thickness)) process.exit(1);
     }

@@ -58,7 +58,7 @@ export default function MapGenerator({ open, shapes, onClose, onGenerate }: Prop
   return <div className="generator-backdrop">
     <section className="generator-dialog" role="dialog" aria-modal="true" aria-labelledby="generator-title">
       <header className="generator-header">
-        <div><small>RANDOM MAP BUILDER</small><h2 id="generator-title">一键生成无重叠地图</h2><p>选择多个元素类型，并分别设置数量、平面尺寸、高度与壁厚范围。</p></div>
+        <div><small>RANDOM MAP BUILDER</small><h2 id="generator-title">一键生成无重叠地图</h2><p>设置数量、尺寸与壁厚范围；角度从 −180°、−90°、0°、90°、180° 中随机选择。</p></div>
         <button className="generator-close" aria-label="关闭一键生成面板" onClick={onClose}>×</button>
       </header>
 
