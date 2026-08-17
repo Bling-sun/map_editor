@@ -69,3 +69,46 @@ test("marquee intersection includes rotated obstacle bounds", async () => {
   const { stderr } = await run(executable, ["-e", script], { cwd: projectRoot.pathname });
   assert.equal(stderr, "");
 });
+
+test("duplicates a multi-selection as one in-bounds group", async () => {
+  const executable = new URL("../node_modules/.bin/tsx", import.meta.url).pathname;
+  const script = `
+    import { duplicateObstacles, obstacleBounds } from "./app/map-types.ts";
+    const preset = { shape: "box", angle: 0, width: 2, depth: 2, height: 1, thickness: .2, radius: 1, topScale: .5, clearance: 1, crownRadius: 1 };
+    const obstacles = [
+      { ...preset, id: "a", name: "A", x: 3, y: -3 },
+      { ...preset, id: "b", name: "B", x: 1, y: -1 },
+      { ...preset, id: "c", name: "C", x: -3, y: 3 },
+    ];
+    let id = 0;
+    const copies = duplicateObstacles(obstacles, ["a", "b"], { mapWidth: 10, mapHeight: 10, offset: 2, createId: () => \`copy-\${++id}\` });
+    if (copies.length !== 2 || copies[0].id === "a" || copies[1].id === "b") process.exit(1);
+    const dx = copies[0].x - obstacles[0].x, dy = copies[0].y - obstacles[0].y;
+    if (copies[1].x - obstacles[1].x !== dx || copies[1].y - obstacles[1].y !== dy) process.exit(1);
+    if (!copies.every((item) => { const bounds = obstacleBounds(item); return bounds.minX >= -5 && bounds.maxX <= 5 && bounds.minY >= -5 && bounds.maxY <= 5; })) process.exit(1);
+    const again = duplicateObstacles([...obstacles, ...copies], copies.map((item) => item.id), { mapWidth: 10, mapHeight: 10, offset: 2, createId: () => \`again-\${++id}\` });
+    if (again[0].name !== "A 副本 2" || again[1].name !== "B 副本 2") process.exit(1);
+  `;
+  const { stderr } = await run(executable, ["-e", script], { cwd: projectRoot.pathname });
+  assert.equal(stderr, "");
+});
+
+test("moves and rotates a selected obstacle group rigidly", async () => {
+  const executable = new URL("../node_modules/.bin/tsx", import.meta.url).pathname;
+  const script = `
+    import { constrainGroupTranslation, obstacleBounds, rotateObstacleGroup } from "./app/map-types.ts";
+    const preset = { shape: "box", angle: 0, width: 2, depth: 1, height: 1, thickness: .2, radius: 1, topScale: .5, clearance: 1, crownRadius: 1 };
+    const obstacles = [
+      { ...preset, id: "a", name: "A", x: -2, y: 0 },
+      { ...preset, id: "b", name: "B", x: 2, y: 0 },
+    ];
+    const move = constrainGroupTranslation(obstacles, 10, 10, 8, 3);
+    if (move.x !== 2 || move.y !== 3) process.exit(1);
+    const rotated = rotateObstacleGroup(obstacles, ["a", "b"], 90, 10, 10);
+    if (rotated.length !== 2 || rotated[0].x !== 0 || rotated[0].y !== -2 || rotated[1].x !== 0 || rotated[1].y !== 2) process.exit(1);
+    if (rotated.some((item) => item.angle !== 90)) process.exit(1);
+    if (!rotated.every((item) => { const bounds = obstacleBounds(item); return bounds.minX >= -5 && bounds.maxX <= 5 && bounds.minY >= -5 && bounds.maxY <= 5; })) process.exit(1);
+  `;
+  const { stderr } = await run(executable, ["-e", script], { cwd: projectRoot.pathname });
+  assert.equal(stderr, "");
+});

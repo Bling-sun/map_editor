@@ -94,6 +94,9 @@ kbd { padding: 4px 6px; border: 1px solid #d8ddd6; border-bottom-width: 2px; bor
 .map-wrap.placing { cursor: crosshair; }
 .map-wrap.selecting { cursor: cell; }
 .selection-marquee { position: absolute; z-index: 20; border: 1px solid #1f62d6; background: #3b82f627; box-shadow: inset 0 0 0 1px #ffffff99; pointer-events: none; }
+.group-selection-box { position: absolute; z-index: 18; border: 1px dashed #1f62d6; background: #3b82f60b; pointer-events: none; }
+.group-selection-box > button { position: absolute; left: 50%; top: 5px; height: 22px; transform: translateX(-50%); border: 1px solid #174da5; border-radius: 6px; padding: 0 8px; color: #fff; background: #2563c9; box-shadow: 0 2px 7px #174da544; cursor: move; pointer-events: auto; white-space: nowrap; font-size: 8px; font-weight: 800; touch-action: none; }
+.group-selection-box > button:active { background: #174da5; }
 .axis { position: absolute; pointer-events: none; z-index: 1; }
 .axis i { position: absolute; display: block; background: #88a09180; }
 .axis span { position: absolute; color: #7b8b81; font-size: 8px; font-weight: 800; }
@@ -162,7 +165,17 @@ kbd { padding: 4px 6px; border: 1px solid #d8ddd6; border-bottom-width: 2px; bor
 .multi-inspector > span { display: grid; place-items: center; align-self: center; width: 46px; height: 46px; border-radius: 50%; color: #1f5bc5; background: #e1ebff; font-size: 23px; }
 .multi-inspector > b { margin-top: 12px; color: #23477f; font-size: 11px; }
 .multi-inspector > p { margin: 7px 0 15px; color: #71809a; font-size: 9px; line-height: 1.55; }
+.multi-transform { margin-bottom: 8px; padding: 10px; border: 1px solid #d5dff1; border-radius: 8px; background: #fff; text-align: left; }
+.multi-transform > b { display: block; margin-bottom: 8px; color: #536784; font-size: 8px; }
+.multi-transform > label { display: flex; align-items: center; margin-bottom: 7px; border: 1px solid #cfd9eb; border-radius: 6px; background: #f9fbff; }
+.multi-transform input { width: 100%; height: 30px; border: 0; outline: 0; padding: 0 8px; background: transparent; font-size: 10px; font-weight: 800; }
+.multi-transform em { padding-right: 8px; color: #71809a; font-size: 9px; font-style: normal; }
+.multi-transform > div { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px; }
+.multi-transform button { height: 30px; border: 1px solid #cfd9eb; border-radius: 6px; color: #2456a5; background: #f6f9ff; cursor: pointer; font-size: 8px; font-weight: 800; }
+.multi-transform button:hover { border-color: #9db3d9; background: #e9f0ff; }
 .multi-inspector > button { height: 36px; margin-top: 7px; border: 1px solid #d5dce8; border-radius: 7px; background: #fff; cursor: pointer; font-size: 9px; font-weight: 800; }
+.multi-inspector > button.group-drag-control { margin: 0 0 8px; color: #fff; border-color: #174da5; background: #2563c9; cursor: move; touch-action: none; }
+.multi-inspector > button.group-drag-control:active { background: #174da5; }
 .multi-inspector > button.danger { color: #ac3f38; border-color: #ebcecb; background: #fff7f6; }
 .multi-inspector > button.copy { color: #2456a5; border-color: #cddaf0; background: #f6f9ff; }
 .map-settings { margin-top: 25px; padding-top: 1px; border-top: 1px solid var(--line); }

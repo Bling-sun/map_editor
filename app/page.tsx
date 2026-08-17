@@ -4,7 +4,7 @@ import { ChangeEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, use
 import MapGenerator from "./MapGenerator";
 import ThreePreview from "./ThreePreview";
 import { generateNonOverlappingMap, GeneratorConfig } from "./map-generator";
-import { Obstacle, Shape, clampedThickness, isCompositeShape, localRects, obstacleFootprint, obstacleIntersectsRect } from "./map-types";
+import { Obstacle, Shape, clampedThickness, constrainGroupTranslation, duplicateObstacles, isCompositeShape, localRects, obstacleFootprint, obstacleGroupBounds, obstacleIntersectsRect, rotateObstacleGroup } from "./map-types";
 
 type MapFile = {
   format: "neural-tracker-map";
@@ -60,11 +60,10 @@ const DEFAULT_BOUNDARY = { enabled: true, thickness: 0.15, height: 1.5 };
 
 type DragState = {
   id: string;
+  ids: string[];
   pointerId: number;
   startClientX: number;
   startClientY: number;
-  originX: number;
-  originY: number;
   mapRect: DOMRect;
   before: Obstacle[];
   moved: boolean;
@@ -233,6 +232,7 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const [undoStack, setUndoStack] = useState<Obstacle[][]>([]);
   const [redoStack, setRedoStack] = useState<Obstacle[][]>([]);
+  const [groupRotationDegrees, setGroupRotationDegrees] = useState(15);
   const fileInput = useRef<HTMLInputElement>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -241,6 +241,8 @@ export default function Home() {
 
   const selected = obstacles.find((item) => item.id === selectedId) ?? null;
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedObstacles = useMemo(() => obstacles.filter((item) => selectedIdSet.has(item.id)), [obstacles, selectedIdSet]);
+  const selectedGroupBounds = useMemo(() => selectedIds.length > 1 ? obstacleGroupBounds(selectedObstacles) : null, [selectedIds.length, selectedObstacles]);
   const mapFile = useMemo<MapFile>(() => ({ format: "neural-tracker-map", version: 1, name: mapName, map: { width: mapWidth, height: mapHeight, resolution }, boundary, tracker, target, obstacles }), [mapName, mapWidth, mapHeight, resolution, boundary, tracker, target, obstacles]);
 
   const announce = useCallback((message: string) => {
@@ -265,6 +267,12 @@ export default function Home() {
     setSelectedId(id);
     setSelectedIds(id ? [id] : []);
   }, []);
+
+  const toggleSelection = useCallback((id: string) => {
+    const next = selectedIds.includes(id) ? selectedIds.filter((item) => item !== id) : [...selectedIds, id];
+    setSelectedIds(next);
+    setSelectedId(next.length === 1 ? next[0] : null);
+  }, [selectedIds]);
 
   const generateMap = (config: GeneratorConfig, spacing: number) => {
     const result = generateNonOverlappingMap({
@@ -348,7 +356,10 @@ export default function Home() {
       startMarquee(event);
       return;
     }
-    if (!placing || (event.target as HTMLElement).closest("[data-obstacle]")) return;
+    if (!placing || (event.target as HTMLElement).closest("[data-obstacle]")) {
+      if (!(event.target as HTMLElement).closest("[data-obstacle]")) clearSelection();
+      return;
+    }
     const rect = event.currentTarget.getBoundingClientRect();
     let x = ((event.clientX - rect.left) / rect.width - 0.5) * mapWidth;
     let y = (0.5 - (event.clientY - rect.top) / rect.height) * mapHeight;
@@ -365,28 +376,43 @@ export default function Home() {
     announce(`已放置：${item.name}`);
   };
 
-  const obstaclePointerDown = (event: PointerEvent<HTMLButtonElement>, item: Obstacle) => {
-    if (selectionMode) return;
-    event.stopPropagation();
+  const beginGroupDrag = (event: PointerEvent<HTMLElement>, item: Obstacle, ids: string[]) => {
     const mapRect = mapRef.current?.getBoundingClientRect();
     if (!mapRect) return;
+    event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    selectSingle(item.id);
     setPlacing(false);
     dragRef.current = {
       id: item.id,
+      ids,
       pointerId: event.pointerId,
       startClientX: event.clientX,
       startClientY: event.clientY,
-      originX: item.x,
-      originY: item.y,
       mapRect,
       before: obstacles,
       moved: false,
     };
   };
 
-  const obstaclePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
+  const obstaclePointerDown = (event: PointerEvent<HTMLButtonElement>, item: Obstacle) => {
+    if (selectionMode) return;
+    event.stopPropagation();
+    if (event.shiftKey || event.ctrlKey || event.metaKey) {
+      toggleSelection(item.id);
+      setPlacing(false);
+      return;
+    }
+    const ids = selectedIds.length > 1 && selectedIdSet.has(item.id) ? selectedIds : [item.id];
+    if (ids.length === 1) selectSingle(item.id);
+    beginGroupDrag(event, item, ids);
+  };
+
+  const selectedGroupPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+    const anchor = selectedObstacles[0];
+    if (anchor) beginGroupDrag(event, anchor, selectedIds);
+  };
+
+  const obstaclePointerMove = (event: PointerEvent<HTMLElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     const deltaX = (event.clientX - drag.startClientX) / drag.mapRect.width * mapWidth;
@@ -394,25 +420,32 @@ export default function Home() {
     if (!drag.moved && Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY) < 2) return;
     drag.moved = true;
     const grid = Math.max(resolution, 0.25);
-    const clampX = (value: number) => Math.max(-mapWidth / 2, Math.min(mapWidth / 2, value));
-    const clampY = (value: number) => Math.max(-mapHeight / 2, Math.min(mapHeight / 2, value));
-    let x = clampX(drag.originX + deltaX);
-    let y = clampY(drag.originY + deltaY);
+    const anchor = drag.before.find((item) => item.id === drag.id);
+    if (!anchor) return;
+    let moveX = deltaX;
+    let moveY = deltaY;
     if (snap) {
-      x = Math.round(x / grid) * grid;
-      y = Math.round(y / grid) * grid;
+      moveX = Math.round((anchor.x + moveX) / grid) * grid - anchor.x;
+      moveY = Math.round((anchor.y + moveY) / grid) * grid - anchor.y;
     }
-    setObstacles((current) => current.map((obstacle) => obstacle.id === drag.id ? { ...obstacle, x: rounded(x), y: rounded(y) } : obstacle));
+    const moving = new Set(drag.ids);
+    const source = drag.before.filter((item) => moving.has(item.id));
+    const translation = constrainGroupTranslation(source, mapWidth, mapHeight, moveX, moveY);
+    const origins = new Map(source.map((item) => [item.id, item]));
+    setObstacles((current) => current.map((obstacle) => {
+      const origin = origins.get(obstacle.id);
+      return origin ? { ...obstacle, x: rounded(origin.x + translation.x), y: rounded(origin.y + translation.y) } : obstacle;
+    }));
   };
 
-  const obstaclePointerUp = (event: PointerEvent<HTMLButtonElement>) => {
+  const obstaclePointerUp = (event: PointerEvent<HTMLElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     if (drag.moved) {
       setUndoStack((stack) => [...stack.slice(-29), drag.before]);
       setRedoStack([]);
-      announce("障碍物位置已更新");
+      announce(drag.ids.length > 1 ? `已整体移动 ${drag.ids.length} 个障碍物` : "障碍物位置已更新");
     }
     dragRef.current = null;
   };
@@ -464,15 +497,8 @@ export default function Home() {
 
   const copySelected = useCallback(() => {
     if (!selectedIds.length) return;
-    const copying = new Set(selectedIds);
     const offset = Math.max(0.5, snap ? Math.max(resolution, 0.25) * 2 : 0.5);
-    const copies = obstacles.filter((item) => copying.has(item.id)).map((item) => ({
-      ...item,
-      id: uid(),
-      name: `${item.name} 副本`,
-      x: rounded(Math.max(-mapWidth / 2, Math.min(mapWidth / 2, item.x + offset))),
-      y: rounded(Math.max(-mapHeight / 2, Math.min(mapHeight / 2, item.y - offset))),
-    }));
+    const copies = duplicateObstacles(obstacles, selectedIds, { mapWidth, mapHeight, offset, createId: uid });
     if (!copies.length) return;
     commit([...obstacles, ...copies]);
     const ids = copies.map((item) => item.id);
@@ -480,6 +506,15 @@ export default function Home() {
     setSelectedId(ids.length === 1 ? ids[0] : null);
     announce(copies.length > 1 ? `已批量复制 ${copies.length} 个障碍物` : "障碍物已复制");
   }, [selectedIds, obstacles, commit, announce, snap, resolution, mapWidth, mapHeight]);
+
+  const rotateSelected = useCallback((degrees: number) => {
+    if (selectedIds.length < 2) return;
+    const rotated = rotateObstacleGroup(obstacles, selectedIds, degrees, mapWidth, mapHeight);
+    if (!rotated.length) return;
+    const updates = new Map(rotated.map((item) => [item.id, item]));
+    commit(obstacles.map((item) => updates.get(item.id) ?? item));
+    announce(`已整体旋转 ${degrees > 0 ? "+" : ""}${degrees}°`);
+  }, [selectedIds, obstacles, mapWidth, mapHeight, commit, announce]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -597,6 +632,8 @@ export default function Home() {
             return <button
               type="button"
               data-obstacle
+              aria-pressed={selectedIdSet.has(item.id)}
+              title="按 Shift / Ctrl / Cmd 点击可多选"
               aria-label={`${item.name}，点击选择或拖动`}
               key={item.id}
               className={`obstacle ${item.shape} ${selectedIdSet.has(item.id) ? "selected" : ""}`}
@@ -612,6 +649,7 @@ export default function Home() {
               {item.shape === "tree" && <><i className="tree-crown tree-crown-main" /><i className="tree-crown tree-crown-left" /><i className="tree-crown tree-crown-right" /><i className="tree-branch tree-branch-a" /><i className="tree-branch tree-branch-b" /><i className="tree-branch tree-branch-c" /><i className="tree-trunk" style={{ width: `${item.radius / item.crownRadius * 100}%`, height: `${item.radius / item.crownRadius * 100}%` }} /></>}
             </button>;
           })}
+          {selectedGroupBounds && <div className="group-selection-box" role="group" aria-label="多选障碍物整体控制" style={{ left: `${(selectedGroupBounds.minX / mapWidth + .5) * 100}%`, top: `${(.5 - selectedGroupBounds.maxY / mapHeight) * 100}%`, width: `${(selectedGroupBounds.maxX - selectedGroupBounds.minX) / mapWidth * 100}%`, height: `${(selectedGroupBounds.maxY - selectedGroupBounds.minY) / mapHeight * 100}%` }}><button type="button" aria-label="按住并拖动整组" onPointerDown={selectedGroupPointerDown} onPointerMove={obstaclePointerMove} onPointerUp={obstaclePointerUp} onPointerCancel={obstaclePointerUp}>✥ 拖动整组</button></div>}
           {marquee && <div className="selection-marquee" aria-hidden="true" style={{ left: Math.min(marquee.startX, marquee.currentX), top: Math.min(marquee.startY, marquee.currentY), width: Math.abs(marquee.currentX - marquee.startX), height: Math.abs(marquee.currentY - marquee.startY) }} />}
           <div className="target-marker" style={{ left: `${(target.x / mapWidth + 0.5) * 100}%`, top: `${(0.5 - target.y / mapHeight) * 100}%`, transform: `translate(-50%, -50%) rotate(${-target.yaw}deg)` }}><i /><span>目标</span></div>
           <div className="tracker-marker" style={{ left: `${(tracker.x / mapWidth + 0.5) * 100}%`, top: `${(0.5 - tracker.y / mapHeight) * 100}%`, transform: `translate(-50%, -50%) rotate(${-tracker.yaw}deg)` }}><i>NT</i><span>tracker</span></div>
@@ -622,7 +660,7 @@ export default function Home() {
 
       <aside className="right-panel panel">
         <div className="panel-heading"><div><small>03 / PROPERTIES</small><h2>属性检查器</h2></div><span className="step-pill muted">3</span></div>
-        {selectedIds.length > 1 ? <div className="multi-inspector"><span>▱</span><b>已选中 {selectedIds.length} 个障碍物</b><p>可一次复制或删除全部选中项，两种操作都支持撤销和重做。</p><button className="copy" onClick={copySelected}>⧉ 批量复制选中项</button><button className="danger" onClick={removeSelected}>⌫ 批量删除选中项</button><button onClick={clearSelection}>取消选择</button></div> : selected ? <div className="inspector">
+        {selectedIds.length > 1 ? <div className="multi-inspector"><span>▱</span><b>已选中 {selectedIds.length} 个障碍物</b><p>使用画布上的蓝色手柄或下方按钮拖动整组；旋转会同步更新所有元素的位置和角度。</p><button className="group-drag-control" onPointerDown={selectedGroupPointerDown} onPointerMove={obstaclePointerMove} onPointerUp={obstaclePointerUp} onPointerCancel={obstaclePointerUp}>✥ 按住并拖动整组</button><div className="multi-transform"><b>整体旋转角度</b><label><input aria-label="整体旋转角度" type="number" min="1" max="180" step="1" value={groupRotationDegrees} onChange={(event) => setGroupRotationDegrees(Math.max(1, Math.min(180, Number(event.target.value) || 1)))} /><em>°</em></label><div><button onClick={() => rotateSelected(-groupRotationDegrees)}>↶ 逆时针</button><button onClick={() => rotateSelected(groupRotationDegrees)}>顺时针 ↷</button></div></div><button className="copy" onClick={copySelected}>⧉ 批量复制选中项</button><button className="danger" onClick={removeSelected}>⌫ 批量删除选中项</button><button onClick={clearSelection}>取消选择</button></div> : selected ? <div className="inspector">
           <label className="name-field"><span>名称</span><input value={selected.name} onChange={(event) => updateObstacle(selected.id, { name: event.target.value })} /></label>
           <div className="type-chip"><span>{SHAPES.find((item) => item.id === selected.shape)?.glyph}</span><div><small>类型</small><b>{SHAPES.find((item) => item.id === selected.shape)?.title}</b></div></div>
           <div className="subheading compact"><div><small>TRANSFORM</small><h3>位置与旋转</h3></div></div>
@@ -641,7 +679,7 @@ export default function Home() {
             {selected.shape === "arch" && <NumberField label="净空高度" value={selected.clearance} min={0.2} max={selected.height - .05} onChange={(value) => updateObstacle(selected.id, { clearance: Math.max(.2, Math.min(value, selected.height - .05)) })} />}
           </div>
           <div className="inspector-actions"><button onClick={copySelected}>⧉ 复制</button><button className="danger" onClick={removeSelected}>⌫ 删除</button></div>
-        </div> : <div className="empty-inspector"><span>↖</span><b>未选择障碍物</b><p>点击画布中的障碍物，在此精确调整位置、角度与尺寸。</p></div>}
+        </div> : <div className="empty-inspector"><span>↖</span><b>未选择障碍物</b><p>点击障碍物可编辑；按 Shift / Ctrl / Cmd 点击或使用框选可多选。</p></div>}
 
         <div className="map-settings">
           <div className="subheading compact"><div><small>MAP SETTINGS</small><h3>地图参数</h3></div></div>
