@@ -17,6 +17,10 @@ type MapFile = {
   obstacles: Obstacle[];
 };
 
+type SavedWorkspace = MapFile & {
+  editor: { snap: boolean };
+};
+
 const SHAPES: { id: Shape; title: string; hint: string; glyph: string }[] = [
   { id: "box", title: "矩形", hint: "箱体 / 建筑", glyph: "▰" },
   { id: "wall", title: "墙体", hint: "长墙 / 隔断", glyph: "▬" },
@@ -47,16 +51,10 @@ const PRESETS: Record<Shape, Omit<Obstacle, "id" | "name" | "shape" | "x" | "y">
   tree: preset({ width: 2.4, depth: 2.4, height: 3.2, radius: 0.28, crownRadius: 1.2 }),
 };
 
-const STARTER_OBSTACLES: Obstacle[] = [
-  { id: "wall-a", name: "入口墙", shape: "wall", x: -4.6, y: 3.1, ...preset({ width: 4.2, depth: 0.35, thickness: 0.35 }) },
-  { id: "corner-a", name: "转角围挡", shape: "l_shape", x: 4.8, y: 2.5, ...preset({ width: 3.4, depth: 3.4, thickness: 0.35, angle: 90 }) },
-  { id: "tree-a", name: "树状 01", shape: "tree", x: -2.2, y: -3.4, ...preset({ width: 2.2, depth: 2.2, height: 3, radius: 0.28, crownRadius: 1.1 }) },
-  { id: "box-a", name: "箱体 01", shape: "box", x: 3.6, y: -3.8, ...preset({ width: 1.8, depth: 1.25, height: 1.2, angle: -18 }) },
-];
-
 const TRACKER_START = { x: -9.5, y: 0, yaw: 0 };
 const TARGET_START = { x: -7, y: 0, yaw: 0 };
 const DEFAULT_BOUNDARY = { enabled: true, thickness: 0.15, height: 1.5 };
+const WORKSPACE_STORAGE_KEY = "neural-tracker-map-studio.workspace.v1";
 
 type DragState = {
   id: string;
@@ -218,11 +216,11 @@ export default function Home() {
   const [boundary, setBoundary] = useState(DEFAULT_BOUNDARY);
   const [shape, setShape] = useState<Shape>("wall");
   const [draft, setDraft] = useState(PRESETS.wall);
-  const [obstacles, setObstacles] = useState<Obstacle[]>(STARTER_OBSTACLES);
-  const [selectedId, setSelectedId] = useState<string | null>(STARTER_OBSTACLES[1].id);
-  const [selectedIds, setSelectedIds] = useState<string[]>([STARTER_OBSTACLES[1].id]);
+  const [obstacles, setObstacles] = useState<Obstacle[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [snap, setSnap] = useState(true);
-  const [placing, setPlacing] = useState(true);
+  const [placing, setPlacing] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [marquee, setMarquee] = useState<MarqueeState | null>(null);
   const [viewMode, setViewMode] = useState<"2d" | "3d">("2d");
@@ -233,6 +231,7 @@ export default function Home() {
   const [undoStack, setUndoStack] = useState<Obstacle[][]>([]);
   const [redoStack, setRedoStack] = useState<Obstacle[][]>([]);
   const [groupRotationDegrees, setGroupRotationDegrees] = useState(15);
+  const [storageReady, setStorageReady] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -249,6 +248,44 @@ export default function Home() {
     setToast(message);
     window.setTimeout(() => setToast(""), 2400);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    window.queueMicrotask(() => {
+      if (cancelled) return;
+      try {
+        const saved = window.localStorage.getItem(WORKSPACE_STORAGE_KEY);
+        if (!saved) return;
+        const parsed = JSON.parse(saved) as SavedWorkspace;
+        if (parsed.format !== "neural-tracker-map" || parsed.version !== 1 || !parsed.map || !Array.isArray(parsed.obstacles)) return;
+        setMapName(parsed.name || "g1_custom_test");
+        setMapWidth(Number(parsed.map.width) || 80);
+        setMapHeight(Number(parsed.map.height) || 80);
+        setResolution(Number(parsed.map.resolution) || 0.05);
+        setBoundary(parsed.boundary ?? DEFAULT_BOUNDARY);
+        setTracker(parsed.tracker ?? TRACKER_START);
+        setTarget(parsed.target ?? TARGET_START);
+        setObstacles(parsed.obstacles.map((item) => ({ ...preset({}), ...item })));
+        setSnap(parsed.editor?.snap ?? true);
+        announce("已恢复上次编辑内容");
+      } catch {
+        window.localStorage.removeItem(WORKSPACE_STORAGE_KEY);
+      } finally {
+        if (!cancelled) setStorageReady(true);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [announce]);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    const saved: SavedWorkspace = { ...mapFile, editor: { snap } };
+    try {
+      window.localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(saved));
+    } catch {
+      // The editor remains usable when browser storage is unavailable or full.
+    }
+  }, [storageReady, mapFile, snap]);
 
   const commit = useCallback((next: Obstacle[]) => {
     setUndoStack((stack) => [...stack.slice(-29), obstacles]);

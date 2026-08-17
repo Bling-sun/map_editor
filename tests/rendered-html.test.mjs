@@ -33,6 +33,7 @@ test("server-renders the Neural Tracker map editor", async () => {
   assert.match(html, /外墙高度/);
   assert.match(html, /TRACKER 起点/);
   assert.match(html, /TARGET 起点/);
+  assert.doesNotMatch(html, /入口墙|转角围挡|树状 01|箱体 01/);
   for (const label of ["矩形", "墙体", "圆柱", "L 型", "E 型", "T 型", "H 型", "S 型", "F 型", "棱台", "拱桥", "树状"]) {
     assert.match(html, new RegExp(`>${label}<`));
   }
