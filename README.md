@@ -2,7 +2,7 @@
 
 用于 G1 跟踪仿真的浏览器地图编辑器。默认地图为 `80 x 80 m`，地图单位为米，
 世界坐标原点位于画布中心，`+X` 向右、`+Y` 向上。初始位置与
-`src/simulator/config/simulator.yaml` 一致：tracker 为 `(-9.5, 0, 0°)`，
+`../neural_tracker/src/simulator/config/simulator.yaml` 一致：tracker 为 `(-9.5, 0, 0°)`，
 target 为 `(-7.0, 0, 0°)`。
 
 默认地图四边包含与 `neural_tracker` 相同的外墙：初始墙厚为 `0.15 m`，在
@@ -12,7 +12,7 @@ target 为 `(-7.0, 0, 0°)`。
 ## 本地运行
 
 ```bash
-cd ~/Documents/neural_tracker/map_editor
+cd ~/Documents/map_editor
 npm run dev
 ```
 
@@ -54,12 +54,22 @@ tracker 和 target；点击模型可选中并同步属性检查器，拖动模�
 
 两个文件必须来自同一次设计。当前 G1 ROS2 演示的自定义地图要求地图宽、高相同。
 
+先在宿主机把同一次导出的两个文件放进独立 G1 项目，以便容器访问：
+
 ```bash
-cd ~/Documents/neural_tracker
+mkdir -p ~/Documents/Neural_Tracker_g1/maps
+cp ~/Downloads/g1_custom_test.{json,xml} ~/Documents/Neural_Tracker_g1/maps/
+cd ~/Documents/Neural_Tracker_g1
+./g1_sim/run_ros_container.sh shell
+```
+
+进入容器后运行：
+
+```bash
 ./g1_sim/build_ros_workspace.sh
 ./start_tracking_g1.sh \
-  --map-json "$HOME/Downloads/g1_custom_test.json" \
-  --scene-xml "$HOME/Downloads/g1_custom_test.xml"
+  --map-json /workspace/neural_tracker/maps/g1_custom_test.json \
+  --scene-xml /workspace/neural_tracker/maps/g1_custom_test.xml
 ```
 
 JSON 会被栅格化为和现有 tracker 兼容的 `nav_msgs/OccupancyGrid`；XML 由
