@@ -38,3 +38,7 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+
+# local hosting metadata and TypeScript cache
+/.openai/
+*.tsbuildinfo
